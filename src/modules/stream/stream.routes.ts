@@ -2,8 +2,12 @@ import { Router, Request, Response } from "express";
 import { requireAuth, requireOrganization } from "../../middlewares/auth.middleware";
 import { createRedisSubscriber } from "../../lib/redis";
 import { INCIDENT_CHANNEL } from "../incidents/incident.service";
+import { logger } from "../../lib/logger";
 
 const router = Router();
+
+// Set to track active SSE client responses for graceful shutdown draining
+export const activeSSEConnections = new Set<Response>();
 
 // Stream endpoint requires user authentication and organization context
 router.get("/stream", requireAuth, requireOrganization, async (req: Request, res: Response): Promise<void> => {
@@ -17,10 +21,13 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
     "X-Accel-Buffering": "no",
   });
 
-  // Flush headers immediately
+  // Flush headers immediately if available
   if (typeof (res as any).flush === "function") {
     (res as any).flush();
   }
+
+  // Register active connection
+  activeSSEConnections.add(res);
 
   // 2. Send initial connection message
   res.write(`event: connected\ndata: ${JSON.stringify({ message: "SSE stream connected", organizationId })}\n\n`);
@@ -40,7 +47,7 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
           res.write(`event: incident_update\ndata: ${JSON.stringify(parsed)}\n\n`);
         }
       } catch (err) {
-        console.error("[SSE] Error parsing Redis message:", err);
+        logger.error("[SSE] Error parsing Redis message:", err);
       }
     }
   };
@@ -49,9 +56,10 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
 
   try {
     await subscriber.subscribe(INCIDENT_CHANNEL);
-    console.log(`[SSE] Client connected for org: ${organizationId}`);
-  } catch (err) {
-    console.error("[SSE] Redis subscription failed:", err);
+    logger.info(`[SSE] Client connected for org: ${organizationId}`);
+  } catch (err: any) {
+    logger.error("[SSE] Redis subscription failed:", err);
+    activeSSEConnections.delete(res);
     res.end();
     return;
   }
@@ -68,21 +76,22 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
     if (isClosed) return;
     isClosed = true;
 
+    activeSSEConnections.delete(res);
     clearInterval(heartbeatTimer);
     subscriber.removeListener("message", handleMessage);
 
     subscriber
       .unsubscribe(INCIDENT_CHANNEL)
       .then(() => subscriber.quit())
-      .catch((err) => console.error("[SSE] Error disconnecting subscriber:", err));
+      .catch((err) => logger.error("[SSE] Error disconnecting subscriber:", err));
 
-    console.log(`[SSE] Client disconnected for org: ${organizationId}`);
+    logger.info(`[SSE] Client disconnected for org: ${organizationId}`);
   };
 
   req.on("close", cleanup);
   req.on("end", cleanup);
   res.on("error", (err) => {
-    console.error("[SSE] Connection error:", err);
+    logger.error("[SSE] Connection error:", err);
     cleanup();
   });
 });
