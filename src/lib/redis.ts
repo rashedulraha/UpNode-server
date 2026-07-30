@@ -2,21 +2,25 @@ import Redis, { RedisOptions } from "ioredis";
 import dotenv from "dotenv";
 
 dotenv.config();
-
 const getRedisOptions = (): RedisOptions => {
+  const commonOptions: RedisOptions = {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy(times) {
+      // Exponential backoff capped at 10 seconds to avoid spamming the console
+      return Math.min(times * 1000, 10000);
+    },
+  };
+
   if (process.env.REDIS_URL) {
-    return {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-    };
+    return commonOptions;
   }
 
   return {
+    ...commonOptions,
     host: process.env.REDIS_HOST || "127.0.0.1",
     port: Number(process.env.REDIS_PORT) || 6379,
     password: process.env.REDIS_PASSWORD || undefined,
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
   };
 };
 

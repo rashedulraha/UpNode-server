@@ -44,7 +44,7 @@ app.use(requestLogger);
 app.use("/api/stream", ingestionRateLimiter);
 
 // 5. Better Auth API Handler
-app.all("/api/auth/*", toNodeHandler(auth.handler));
+app.all("/api/auth/*path", toNodeHandler(auth.handler));
 
 // 6. Mount Feature Modules
 app.use("/api/projects", projectRoutes);
