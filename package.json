@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [],
   "author": "",
@@ -32,9 +34,12 @@
     "@types/express": "^5.0.6",
     "@types/ioredis": "^4.28.10",
     "@types/node": "^26.1.2",
+    "@vitest/coverage-v8": "^4.1.10",
     "nodemon": "^3.1.14",
     "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "vitest-mock-extended": "^5.1.0"
   }
 }
