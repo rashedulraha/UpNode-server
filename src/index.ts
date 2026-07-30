@@ -1,46 +1,76 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import compression from "compression";
 import { toNodeHandler } from "better-auth/node";
+
+import { env } from "./config/env";
+import { logger } from "./lib/logger";
 import { auth } from "./lib/auth";
 import { projectRoutes } from "./modules/projects/project.routes";
 import { incidentRoutes } from "./modules/incidents/incident.routes";
 import { streamRoutes } from "./modules/stream/stream.routes";
 import { errorHandler } from "./middlewares/error.middleware";
+import { requestLogger } from "./middlewares/requestLogger.middleware";
+import { ingestionRateLimiter } from "./middlewares/rateLimit.middleware";
 import { startAlertWorker } from "./workers/alertWorker";
+import { setupGracefulShutdown } from "./lib/shutdown";
 
 const app = express();
-const port = process.env.PORT || 4000;
 
+// Trust reverse proxy in production deployments (Nginx, Cloudflare, AWS ALB)
+if (env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+// 1. Production Security & Performance Middleware
+app.use(helmet());
+app.use(compression());
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: env.CLIENT_URL,
     credentials: true,
   })
 );
-app.use(express.json());
 
-// Better Auth API
+// 2. Request Parsing & Size Limits
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// 3. Centralized Request Logger
+app.use(requestLogger);
+
+// 4. Rate Limiting for Telemetry & Ingestion Stream Endpoints
+app.use("/api/stream", ingestionRateLimiter);
+
+// 5. Better Auth API Handler
 app.all("/api/auth/*", toNodeHandler(auth.handler));
 
-// Mount Feature Modules
+// 6. Mount Feature Modules
 app.use("/api/projects", projectRoutes);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api", streamRoutes);
 
-app.get('/', (req, res) => {
-  res.send('UpNode API is running');
+// Health check endpoint
+app.get("/", (req, res) => {
+  res.json({
+    status: "online",
+    service: "UpNode API",
+    environment: env.NODE_ENV,
+    timestamp: new Date().toISOString(),
+  });
 });
 
-// Centralized Error Handler (must be registered after routes)
+// 7. Centralized Error Handler (Must be registered after all routes)
 app.use(errorHandler);
 
-// Start BullMQ Background Alert Worker
-startAlertWorker();
+// 8. Start BullMQ Background Alert Worker
+const alertWorker = startAlertWorker();
 
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+// 9. Start HTTP Server
+const server = app.listen(env.PORT, () => {
+  logger.info(`UpNode Server running on port ${env.PORT} [${env.NODE_ENV}]`);
 });
+
+// 10. Register Graceful Shutdown Handler (SIGTERM / SIGINT)
+setupGracefulShutdown(server, alertWorker);
