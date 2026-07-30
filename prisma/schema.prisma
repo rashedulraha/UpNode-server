@@ -118,6 +118,7 @@ model Incident {
   description    String
   status         IncidentStatus
   severity       IncidentSeverity
+  version        Int              @default(1)
   projectId      String
   project        Project          @relation(fields: [projectId], references: [id])
   createdAt      DateTime         @default(now())
