@@ -90,6 +90,7 @@ model Member {
 model Project {
   id             String       @id @default(uuid())
   name           String
+  slug           String?      @unique
   url            String?
   apiKey         String       @unique
   organizationId String
