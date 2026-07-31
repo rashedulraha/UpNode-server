@@ -1,12 +1,11 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../generated/prisma"
 }
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
 model Organization {
   id        String    @id @default(uuid())
   name      String
@@ -140,6 +139,8 @@ model Incident {
   project        Project          @relation(fields: [projectId], references: [id])
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
+  aiRootCause    String?
+  aiFixSuggestion String?
   timelineEvents TimelineEvent[]
 
   @@index([projectId, status])
