@@ -206,20 +206,35 @@ export class IncidentService {
   }
 
   async getIncidents(organizationId: string, query: IncidentFilterQuery) {
-    const { projectId, status, severity, limit = 50, offset = 0 } = query;
+    const { projectId, status, severity } = query;
+    const limit = query.limit ? Number(query.limit) : 50;
+    const offset = query.offset ? Number(query.offset) : 0;
 
-    const whereCondition = {
+    const validStatus =
+      status && status !== ("ALL" as any) && Object.values(IncidentStatus).includes(status as IncidentStatus)
+        ? (status as IncidentStatus)
+        : undefined;
+
+    const validSeverity =
+      severity && severity !== ("ALL" as any) && Object.values(IncidentSeverity).includes(severity as IncidentSeverity)
+        ? (severity as IncidentSeverity)
+        : undefined;
+
+    const validProjectId = projectId && projectId !== "ALL" ? String(projectId) : undefined;
+
+    const whereCondition: any = {
       project: { organizationId },
-      ...(projectId && { projectId }),
-      ...(status && { status }),
-      ...(severity && { severity }),
     };
+
+    if (validProjectId) whereCondition.projectId = validProjectId;
+    if (validStatus) whereCondition.status = validStatus;
+    if (validSeverity) whereCondition.severity = validSeverity;
 
     const [items, total] = await Promise.all([
       prisma.incident.findMany({
         where: whereCondition,
-        take: limit,
-        skip: offset,
+        take: Number.isNaN(limit) ? 50 : limit,
+        skip: Number.isNaN(offset) ? 0 : offset,
         orderBy: { createdAt: "desc" },
         include: {
           project: {
