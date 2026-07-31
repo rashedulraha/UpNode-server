@@ -37,3 +37,8 @@ export const validateRequest = (schemas: RequestValidationSchemas) => {
     }
   };
 };
+
+export const validateBody = (schema: ZodSchema) => validateRequest({ body: schema });
+export const validateParams = (schema: ZodSchema) => validateRequest({ params: schema });
+export const validateQuery = (schema: ZodSchema) => validateRequest({ query: schema });
+
