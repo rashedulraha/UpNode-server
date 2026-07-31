@@ -1,4 +1,4 @@
-import { PrismaClient, IncidentStatus, IncidentSeverity, Role } from "../generated/prisma";
+import { PrismaClient, IncidentStatus, IncidentSeverity, Role } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
