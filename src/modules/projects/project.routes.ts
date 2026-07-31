@@ -6,6 +6,10 @@ import { createProjectSchema, projectParamsSchema, updateProjectSchema } from ".
 
 const router = Router();
 
+// Public Unauthenticated Status Page Endpoint
+router.get("/public/:slug/status", (req, res, next) => projectController.getPublicStatus(req, res, next));
+
+// Authenticated Organization Endpoints
 router.use(requireAuth);
 router.use(requireOrganization);
 
