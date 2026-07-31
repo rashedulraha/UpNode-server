@@ -14,6 +14,8 @@ import { errorHandler } from "./middlewares/error.middleware";
 import { requestLogger } from "./middlewares/requestLogger.middleware";
 import { ingestionRateLimiter } from "./middlewares/rateLimit.middleware";
 import { startAlertWorker } from "./workers/alertWorker";
+import { startPingWorker } from "./workers/pingWorker";
+import { setupCronPingJob } from "./queues/pingQueue";
 import { setupGracefulShutdown } from "./lib/shutdown";
 
 const app = express();
@@ -64,8 +66,10 @@ app.get("/", (req, res) => {
 // 7. Centralized Error Handler (Must be registered after all routes)
 app.use(errorHandler);
 
-// 8. Start BullMQ Background Alert Worker
+// 8. Start BullMQ Background Workers & 5-minute Cron Job Scheduler
 const alertWorker = startAlertWorker();
+const pingWorker = startPingWorker();
+setupCronPingJob();
 
 // 9. Start HTTP Server
 const server = app.listen(env.PORT, () => {
@@ -73,4 +77,5 @@ const server = app.listen(env.PORT, () => {
 });
 
 // 10. Register Graceful Shutdown Handler (SIGTERM / SIGINT)
-setupGracefulShutdown(server, alertWorker);
+setupGracefulShutdown(server, [alertWorker, pingWorker]);
+
