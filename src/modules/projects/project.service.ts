@@ -64,6 +64,103 @@ export class ProjectService {
       where: { id: projectId },
     });
   }
+
+  /**
+   * Public unauthenticated status page data provider
+   */
+  async getPublicProjectStatus(slugOrId: string) {
+    // 1. Find project by slug or ID
+    const project = await prisma.project.findFirst({
+      where: {
+        OR: [
+          { slug: slugOrId },
+          { id: slugOrId },
+          { name: { equals: slugOrId, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    if (!project) {
+      throw new NotFoundError(`Public status page for '${slugOrId}' was not found.`);
+    }
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    // 2. Fetch active incidents (not resolved)
+    const activeIncidents = await prisma.incident.findMany({
+      where: {
+        projectId: project.id,
+        status: { in: ["INVESTIGATING", "IDENTIFIED", "MONITORING"] },
+      },
+      include: {
+        timelineEvents: {
+          orderBy: { createdAt: "desc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // 3. Fetch past 7 days incidents with timeline history
+    const past7DaysIncidents = await prisma.incident.findMany({
+      where: {
+        projectId: project.id,
+        createdAt: { gte: sevenDaysAgo },
+      },
+      include: {
+        timelineEvents: {
+          orderBy: { createdAt: "desc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // 4. Fetch recent ping metrics (last 50 pings)
+    const recentMetrics = await prisma.pingMetric.findMany({
+      where: {
+        projectId: project.id,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    // 5. Compute overall operational status
+    let systemStatus: "OPERATIONAL" | "DEGRADED_PERFORMANCE" | "PARTIAL_OUTAGE" | "MAJOR_OUTAGE" = "OPERATIONAL";
+
+    const hasCriticalActive = activeIncidents.some((i) => i.severity === "CRITICAL" || i.severity === "HIGH");
+    const hasMinorActive = activeIncidents.some((i) => i.severity === "MEDIUM" || i.severity === "LOW");
+
+    if (hasCriticalActive) {
+      systemStatus = "MAJOR_OUTAGE";
+    } else if (hasMinorActive) {
+      systemStatus = "PARTIAL_OUTAGE";
+    } else if (recentMetrics.length > 0 && recentMetrics.some((m) => !m.isUp)) {
+      systemStatus = "DEGRADED_PERFORMANCE";
+    }
+
+    // Compute uptime percentage & avg latency
+    const totalPings = recentMetrics.length;
+    const upPings = recentMetrics.filter((m) => m.isUp).length;
+    const uptimePercentage = totalPings > 0 ? Number(((upPings / totalPings) * 100).toFixed(2)) : 100;
+    const avgLatencyMs =
+      totalPings > 0
+        ? Math.round(recentMetrics.reduce((acc, m) => acc + m.responseTimeMs, 0) / totalPings)
+        : 0;
+
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+        slug: project.slug || project.id,
+        url: project.url,
+      },
+      systemStatus,
+      uptimePercentage,
+      avgLatencyMs,
+      activeIncidents,
+      past7DaysIncidents,
+      recentMetrics: recentMetrics.reverse(), // Ascending order for performance graphs
+    };
+  }
 }
 
 export const projectService = new ProjectService();
