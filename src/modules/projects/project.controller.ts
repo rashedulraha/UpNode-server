@@ -45,12 +45,22 @@ export class ProjectController {
     }
   }
 
-  async delete(req: Request, res: Response, next: NextFunction) {
+  async delete(req: Request, res: Response, NextFunction: NextFunction) {
     try {
       const id = String(req.params.id);
       const organizationId = req.organizationId!;
       await projectService.deleteProject(id, organizationId);
       res.status(204).send();
+    } catch (error) {
+      NextFunction(error);
+    }
+  }
+
+  async getPublicStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const slug = String(req.params.slug);
+      const statusData = await projectService.getPublicProjectStatus(slug);
+      res.json(statusData);
     } catch (error) {
       next(error);
     }
