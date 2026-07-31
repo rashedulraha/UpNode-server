@@ -101,10 +101,15 @@ export class OrganizationService {
         },
       });
     } catch {
-      // Ignore audit log failure if any constraint occurs
+      // Ignore audit log failure
     }
 
-    return newMember;
+    const inviteLink = `${process.env.CLIENT_URL || "http://localhost:3000"}/login?invited=true&email=${encodeURIComponent(normalizedEmail)}`;
+
+    return {
+      ...newMember,
+      inviteLink,
+    };
   }
 
   /**
@@ -113,6 +118,7 @@ export class OrganizationService {
   async updateMemberRole(organizationId: string, memberId: string, input: UpdateMemberRoleInput) {
     const member = await prisma.member.findFirst({
       where: { id: memberId, organizationId },
+      include: { user: true },
     });
 
     if (!member) {
@@ -137,6 +143,18 @@ export class OrganizationService {
       },
     });
 
+    // Create Audit Log for Role Change
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: `UPDATE_ROLE: Changed role of ${member.user?.email || memberId} from ${member.role} to ${input.role}`,
+          userId: member.userId,
+        },
+      });
+    } catch {
+      // Ignore audit log failure
+    }
+
     return updated;
   }
 
@@ -146,6 +164,7 @@ export class OrganizationService {
   async removeMember(organizationId: string, memberId: string) {
     const member = await prisma.member.findFirst({
       where: { id: memberId, organizationId },
+      include: { user: true },
     });
 
     if (!member) {
@@ -157,6 +176,18 @@ export class OrganizationService {
     await prisma.member.delete({
       where: { id: memberId },
     });
+
+    // Create Audit Log for Member Removal
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: `REMOVE_MEMBER: Removed ${member.user?.email || memberId} from organization`,
+          userId: member.userId,
+        },
+      });
+    } catch {
+      // Ignore audit log failure
+    }
 
     return { success: true, message: "Member removed from organization successfully." };
   }

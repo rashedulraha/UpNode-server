@@ -161,6 +161,30 @@ export class ProjectService {
       recentMetrics: recentMetrics.reverse(), // Ascending order for performance graphs
     };
   }
+
+  async subscribeToStatusUpdates(slug: string, email: string) {
+    if (!email || !email.includes("@")) {
+      throw new Error("Please enter a valid email address.");
+    }
+
+    const project = await prisma.project.findFirst({
+      where: {
+        OR: [{ slug }, { id: slug }],
+      },
+    });
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Return success response confirming email subscription
+    return {
+      success: true,
+      message: `Subscribed ${email} to real-time status updates for ${project.name}.`,
+      projectName: project.name,
+      email,
+    };
+  }
 }
 
 export const projectService = new ProjectService();

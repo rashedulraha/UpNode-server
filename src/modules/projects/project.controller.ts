@@ -65,6 +65,17 @@ export class ProjectController {
       next(error);
     }
   }
+
+  async subscribePublic(req: Request, res: Response, next: NextFunction) {
+    try {
+      const slug = String(req.params.slug);
+      const { email } = req.body;
+      const result = await projectService.subscribeToStatusUpdates(slug, email);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const projectController = new ProjectController();
