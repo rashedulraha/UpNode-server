@@ -4,6 +4,7 @@ import { PING_QUEUE_NAME } from "../queues/pingQueue";
 import { addIncidentAlertJob } from "../queues/alertQueue";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
+import { analyzeIncidentWithAI } from "../services/ai.service";
 
 export interface PingResult {
   projectId: string;
@@ -79,13 +80,26 @@ export const pingSingleProject = async (project: { id: string; name: string; url
     });
 
     if (!existingOpenIncident) {
+      const title = `HTTP Ping Failed: ${project.name} (Status: ${statusCode ?? "TIMEOUT/ERROR"})`;
+      const description = `Automated 5-minute uptime monitor detected an outage for ${project.url}. Response status: ${statusCode ?? "No Response"}, Latency: ${responseTimeMs}ms.`;
+
+      const aiAnalysis = await analyzeIncidentWithAI({
+        title,
+        description,
+        statusCode,
+        responseTimeMs,
+        url: project.url,
+      });
+
       const incident = await prisma.incident.create({
         data: {
-          title: `HTTP Ping Failed: ${project.name} (Status: ${statusCode ?? "TIMEOUT/ERROR"})`,
-          description: `Automated 5-minute uptime monitor detected an outage for ${project.url}. Response status: ${statusCode ?? "No Response"}, Latency: ${responseTimeMs}ms.`,
+          title,
+          description,
           status: "INVESTIGATING",
           severity: "CRITICAL",
           projectId: project.id,
+          aiRootCause: aiAnalysis.rootCause,
+          aiFixSuggestion: aiAnalysis.fixSuggestion,
           timelineEvents: {
             create: {
               message: `Automated uptime ping failed. Status: ${statusCode ?? "DOWN/TIMEOUT"}, Latency: ${responseTimeMs}ms`,

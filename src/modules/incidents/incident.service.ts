@@ -4,12 +4,16 @@ import { addIncidentAlertJob } from "../../queues/alertQueue";
 import { NotFoundError, OptimisticLockError, ForbiddenError } from "../../middlewares/error.middleware";
 import { IncidentStatus, IncidentSeverity } from "@prisma/client";
 
+import { analyzeIncidentWithAI } from "../../services/ai.service";
+
 export interface CreateIncidentInput {
   title: string;
   description: string;
   projectId: string;
   status?: IncidentStatus;
   severity?: IncidentSeverity;
+  aiRootCause?: string;
+  aiFixSuggestion?: string;
 }
 
 export interface UpdateIncidentInput {
@@ -47,6 +51,20 @@ export class IncidentService {
     const initialStatus = input.status || IncidentStatus.INVESTIGATING;
     const initialSeverity = input.severity || IncidentSeverity.MEDIUM;
 
+    // Run AI diagnostic analysis if not explicitly provided
+    let aiRootCause = input.aiRootCause;
+    let aiFixSuggestion = input.aiFixSuggestion;
+
+    if (!aiRootCause || !aiFixSuggestion) {
+      const aiAnalysis = await analyzeIncidentWithAI({
+        title: input.title,
+        description: input.description,
+        url: project.url || undefined,
+      });
+      aiRootCause = aiRootCause || aiAnalysis.rootCause;
+      aiFixSuggestion = aiFixSuggestion || aiAnalysis.fixSuggestion;
+    }
+
     // 2. Perform DB operations inside Prisma Transaction
     const incident = await prisma.$transaction(async (tx) => {
       const newIncident = await tx.incident.create({
@@ -56,6 +74,8 @@ export class IncidentService {
           status: initialStatus,
           severity: initialSeverity,
           projectId: input.projectId,
+          aiRootCause,
+          aiFixSuggestion,
           version: 1, // Initial version stamp
         },
       });
