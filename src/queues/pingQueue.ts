@@ -31,7 +31,7 @@ export const setupCronPingJob = async () => {
           pattern: "*/5 * * * *", // Every 5 minutes cron pattern
         },
         jobId: "five-minute-project-ping-job",
-      }
+      } as any
     );
     logger.info(`[Ping Queue] Successfully registered 5-minute cron ping job (*/5 * * * *)`);
   } catch (error: any) {
