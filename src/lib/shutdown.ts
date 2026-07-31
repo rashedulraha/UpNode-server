@@ -5,7 +5,7 @@ import { redis, redisPublisher } from "./redis";
 import { activeSSEConnections } from "../modules/stream/stream.routes";
 import { logger } from "./logger";
 
-export const setupGracefulShutdown = (server: Server, worker?: Worker): void => {
+export const setupGracefulShutdown = (server: Server, workers?: Worker | Worker[]): void => {
   let isShuttingDown = false;
 
   const shutdown = async (signal: string) => {
@@ -47,11 +47,12 @@ export const setupGracefulShutdown = (server: Server, worker?: Worker): void => 
         activeSSEConnections.clear();
       }
 
-      // 3. Close BullMQ background worker
-      if (worker) {
-        logger.info("Stopping BullMQ alert worker...");
-        await worker.close();
-        logger.info("BullMQ worker stopped successfully.");
+      // 3. Close BullMQ background workers
+      if (workers) {
+        logger.info("Stopping BullMQ background workers...");
+        const workerList = Array.isArray(workers) ? workers : [workers];
+        await Promise.all(workerList.map((w) => w.close()));
+        logger.info("BullMQ workers stopped successfully.");
       }
 
       // 4. Close Redis client connections
