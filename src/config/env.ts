@@ -19,6 +19,7 @@ const envSchema = z.object({
   SLACK_WEBHOOK_URL: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default("UpNode Alerts <alerts@upnode.dev>"),
+  OPENAI_API_KEY: z.string().optional(),
 });
 
 const validateEnv = () => {
