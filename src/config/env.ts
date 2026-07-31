@@ -16,6 +16,9 @@ const envSchema = z.object({
   CLIENT_URL: z.string().default("http://localhost:3000"),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000), // 1 minute
   RATE_LIMIT_MAX: z.coerce.number().default(100), // 100 requests per window
+  SLACK_WEBHOOK_URL: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().default("UpNode Alerts <alerts@upnode.dev>"),
 });
 
 const validateEnv = () => {
