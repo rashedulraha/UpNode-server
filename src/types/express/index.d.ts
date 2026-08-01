@@ -4,7 +4,7 @@ import { type User, type Session } from "better-auth";
 declare global {
   namespace Express {
     interface Request {
-      user?: User | null;
+      user?: (User & { role?: Role; isBlocked?: boolean }) | null;
       session?: Session | null;
       organizationId?: string;
       role?: Role;

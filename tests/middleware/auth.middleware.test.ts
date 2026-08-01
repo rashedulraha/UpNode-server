@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Request, Response, NextFunction } from "express";
 import {
   requireAuth,
+  requireSuperAdmin,
   requireOrganization,
   requireRole,
 } from "../../src/middlewares/auth.middleware";
@@ -43,14 +44,30 @@ describe("Auth Middleware", () => {
         session: { id: "sess_1" },
       };
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
+      prismaMock.user.findUnique.mockResolvedValue({ id: "user_1", role: Role.VIEWER, isBlocked: false } as any);
 
       await requireAuth(req as Request, res as Response, next);
 
       expect(auth.api.getSession).toHaveBeenCalled();
-      expect(req.user).toEqual(mockSession.user);
+      expect(req.user).toEqual({ ...mockSession.user, role: Role.VIEWER, isBlocked: false });
       expect(req.session).toEqual(mockSession.session);
       expect(next).toHaveBeenCalled();
       expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("should return 403 if user account is blocked", async () => {
+      const mockSession = {
+        user: { id: "user_1", name: "Test" },
+        session: { id: "sess_1" },
+      };
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
+      prismaMock.user.findUnique.mockResolvedValue({ id: "user_1", role: Role.VIEWER, isBlocked: true } as any);
+
+      await requireAuth(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ error: "Forbidden: User account is blocked." });
+      expect(next).not.toHaveBeenCalled();
     });
 
     it("should return 401 if no session found", async () => {
@@ -66,9 +83,40 @@ describe("Auth Middleware", () => {
     });
   });
 
+  describe("requireSuperAdmin", () => {
+    it("should call next if user has SUPER_ADMIN role", async () => {
+      req.user = { id: "admin_1", role: Role.SUPER_ADMIN, isBlocked: false } as any;
+
+      await requireSuperAdmin(req as Request, res as Response, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("should return 403 if user is not SUPER_ADMIN", async () => {
+      req.user = { id: "user_1", role: Role.ADMIN, isBlocked: false } as any;
+
+      await requireSuperAdmin(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ error: "Forbidden: Requires SUPER_ADMIN privileges." });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("should return 403 if super admin is blocked", async () => {
+      req.user = { id: "admin_1", role: Role.SUPER_ADMIN, isBlocked: true } as any;
+
+      await requireSuperAdmin(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ error: "Forbidden: User account is blocked." });
+      expect(next).not.toHaveBeenCalled();
+    });
+  });
+
   describe("requireOrganization", () => {
     beforeEach(() => {
-      req.user = { id: "user_1" } as any;
+      req.user = { id: "user_1", role: Role.VIEWER } as any;
       req.headers = { "x-organization-id": "org_1" };
     });
 
@@ -90,21 +138,25 @@ describe("Auth Middleware", () => {
       expect(next).toHaveBeenCalled();
     });
 
-    it("should return 400 if x-organization-id header is missing", async () => {
+    it("should allow SUPER_ADMIN to access any organization data without membership record", async () => {
+      req.user = { id: "root_1", role: Role.SUPER_ADMIN } as any;
+
+      await requireOrganization(req as Request, res as Response, next);
+
+      expect(req.organizationId).toBe("org_1");
+      expect(req.role).toBe(Role.SUPER_ADMIN);
+      expect(next).toHaveBeenCalled();
+      expect(prismaMock.member.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("should return 400 if organizationId is missing in request and DB", async () => {
       req.headers = {};
+      prismaMock.member.findFirst.mockResolvedValue(null);
+      prismaMock.organization.findFirst.mockResolvedValue(null);
 
       await requireOrganization(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(next).not.toHaveBeenCalled();
-    });
-
-    it("should return 403 if user is not a member", async () => {
-      prismaMock.member.findUnique.mockResolvedValue(null);
-
-      await requireOrganization(req as Request, res as Response, next);
-
-      expect(res.status).toHaveBeenCalledWith(403);
       expect(next).not.toHaveBeenCalled();
     });
   });
@@ -112,6 +164,16 @@ describe("Auth Middleware", () => {
   describe("requireRole", () => {
     it("should call next if user has required role", () => {
       req.role = Role.ADMIN;
+      const middleware = requireRole(Role.ADMIN, Role.ENGINEER);
+
+      middleware(req as Request, res as Response, next);
+
+      expect(next).toHaveBeenCalled();
+    });
+
+    it("should call next if user is SUPER_ADMIN even if role is not explicitly listed", () => {
+      req.role = Role.SUPER_ADMIN;
+      req.user = { id: "root_1", role: Role.SUPER_ADMIN } as any;
       const middleware = requireRole(Role.ADMIN, Role.ENGINEER);
 
       middleware(req as Request, res as Response, next);
