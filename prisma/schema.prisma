@@ -32,6 +32,7 @@ model User {
   
   members       Member[]
   auditLogs     AuditLog[]
+  notificationPreference UserNotificationPreference?
 }
 
 model Session {
@@ -99,7 +100,10 @@ model Project {
   organizationId  String
   slackWebhookUrl String?
   alertEmail      String?
-  sslExpiresAt    DateTime?
+  sslExpiresAt      DateTime?
+  maintenanceMode   Boolean    @default(false)
+  maintenanceStart  DateTime?
+  maintenanceEnd    DateTime?
   organization    Organization @relation(fields: [organizationId], references: [id])
   incidents       Incident[]
   pingMetrics     PingMetric[]
@@ -170,4 +174,12 @@ model AuditLog {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+}
+
+model UserNotificationPreference {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  emailEnabled Boolean @default(true)
+  slackEnabled Boolean @default(true)
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
