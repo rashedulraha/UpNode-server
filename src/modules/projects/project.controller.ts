@@ -25,9 +25,9 @@ export class ProjectController {
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const { name, apiKey } = req.body;
+      const { name, slug, url, apiKey } = req.body;
       const organizationId = req.organizationId!;
-      const project = await projectService.createProject({ name, apiKey }, organizationId);
+      const project = await projectService.createProject({ name, slug, url, apiKey }, organizationId);
       res.status(201).json(project);
     } catch (error) {
       next(error);
