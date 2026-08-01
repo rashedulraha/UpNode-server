@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { requireAuth, requireOrganization } from "../../middlewares/auth.middleware";
 import { createRedisSubscriber } from "../../lib/redis";
 import { INCIDENT_CHANNEL } from "../incidents/incident.service";
+import { METRIC_CHANNEL } from "../../workers/pingWorker";
 import { logger } from "../../lib/logger";
 
 const router = Router();
@@ -49,13 +50,26 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
       } catch (err) {
         logger.error("[SSE] Error parsing Redis message:", err);
       }
+    } else if (channel === METRIC_CHANNEL) {
+      try {
+        const parsed = JSON.parse(message);
+        // Push metrics events belonging to client's organization
+        if (parsed.organizationId === organizationId) {
+          res.write(`event: metric_update\ndata: ${JSON.stringify(parsed)}\n\n`);
+        }
+      } catch (err) {
+        logger.error("[SSE] Error parsing Redis message for metric:", err);
+      }
     }
   };
 
   subscriber.on("message", handleMessage);
 
   try {
-    await subscriber.subscribe(INCIDENT_CHANNEL);
+    await Promise.all([
+      subscriber.subscribe(INCIDENT_CHANNEL),
+      subscriber.subscribe(METRIC_CHANNEL),
+    ]);
     logger.info(`[SSE] Client connected for org: ${organizationId}`);
   } catch (err: any) {
     logger.error("[SSE] Redis subscription failed:", err);
@@ -80,8 +94,10 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
     clearInterval(heartbeatTimer);
     subscriber.removeListener("message", handleMessage);
 
-    subscriber
-      .unsubscribe(INCIDENT_CHANNEL)
+    Promise.all([
+      subscriber.unsubscribe(INCIDENT_CHANNEL),
+      subscriber.unsubscribe(METRIC_CHANNEL)
+    ])
       .then(() => subscriber.quit())
       .catch((err) => logger.error("[SSE] Error disconnecting subscriber:", err));
 

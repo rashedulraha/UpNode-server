@@ -43,6 +43,26 @@ export class OrganizationController {
       next(error);
     }
   }
+
+  async getIntegrations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const organizationId = req.organizationId!;
+      const integrations = await organizationService.getIntegrations(organizationId);
+      res.json(integrations);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateIntegrations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const organizationId = req.organizationId!;
+      const integrations = await organizationService.updateIntegrations(organizationId, req.body);
+      res.json(integrations);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const organizationController = new OrganizationController();

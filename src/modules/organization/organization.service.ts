@@ -42,6 +42,8 @@ export class OrganizationService {
     });
 
     if (!user) {
+      const userCount = await prisma.user.count();
+      const userRole = userCount === 0 ? Role.SUPER_ADMIN : Role.VIEWER;
       const fallbackName = normalizedEmail.split("@")[0];
       user = await prisma.user.create({
         data: {
@@ -49,6 +51,7 @@ export class OrganizationService {
           name: fallbackName.charAt(0).toUpperCase() + fallbackName.slice(1),
           email: normalizedEmail,
           emailVerified: false,
+          role: userRole,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -72,12 +75,18 @@ export class OrganizationService {
       throw error;
     }
 
-    // 3. Create Member relationship in Prisma
+    // 3. Check if first member to join this Organization (if first member, role is ADMIN)
+    const memberCount = await prisma.member.count({
+      where: { organizationId },
+    });
+    const memberRole = memberCount === 0 ? Role.ADMIN : (role as Role);
+
+    // Create Member relationship in Prisma
     const newMember = await prisma.member.create({
       data: {
         organizationId,
         userId: user.id,
-        role: role as Role,
+        role: memberRole,
       },
       include: {
         user: {
@@ -190,6 +199,78 @@ export class OrganizationService {
     }
 
     return { success: true, message: "Member removed from organization successfully." };
+  }
+
+  /**
+   * Get organization and project integration alert settings
+   */
+  async getIntegrations(organizationId: string) {
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: {
+        id: true,
+        name: true,
+        slackWebhookUrl: true,
+        alertEmail: true,
+        projects: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            slackWebhookUrl: true,
+            alertEmail: true,
+          },
+        },
+      },
+    });
+
+    if (!organization) {
+      const error: any = new Error("Organization not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    return organization;
+  }
+
+  /**
+   * Update organization and/or project integration alert settings
+   */
+  async updateIntegrations(
+    organizationId: string,
+    data: {
+      slackWebhookUrl?: string | null;
+      alertEmail?: string | null;
+      projects?: Array<{
+        id: string;
+        slackWebhookUrl?: string | null;
+        alertEmail?: string | null;
+      }>;
+    }
+  ) {
+    // 1. Update Organization alert settings
+    const updatedOrg = await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        slackWebhookUrl: data.slackWebhookUrl !== undefined ? data.slackWebhookUrl : undefined,
+        alertEmail: data.alertEmail !== undefined ? data.alertEmail : undefined,
+      },
+    });
+
+    // 2. Update individual project settings if provided
+    if (data.projects && Array.isArray(data.projects)) {
+      for (const proj of data.projects) {
+        await prisma.project.updateMany({
+          where: { id: proj.id, organizationId },
+          data: {
+            slackWebhookUrl: proj.slackWebhookUrl !== undefined ? proj.slackWebhookUrl : undefined,
+            alertEmail: proj.alertEmail !== undefined ? proj.alertEmail : undefined,
+          },
+        });
+      }
+    }
+
+    return this.getIntegrations(organizationId);
   }
 }
 
