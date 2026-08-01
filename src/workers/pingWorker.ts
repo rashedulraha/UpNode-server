@@ -68,7 +68,30 @@ export const getSSLCertExpiration = (targetUrl: string): Promise<Date | null> =>
  * Pings a single project URL, measures response time, records PingMetric in DB,
  * and creates a CRITICAL incident + alert job if 3 consecutive failures occur.
  */
-export const pingSingleProject = async (project: { id: string; name: string; url: string; organizationId: string }): Promise<PingResult> => {
+/**
+ * Returns true when a project is currently in maintenance mode (manual or scheduled).
+ */
+export const isInMaintenance = (project: {
+  maintenanceMode: boolean;
+  maintenanceStart: Date | null;
+  maintenanceEnd: Date | null;
+}): boolean => {
+  if (project.maintenanceMode) return true;
+
+  const now = new Date();
+  if (
+    project.maintenanceStart !== null &&
+    project.maintenanceEnd !== null &&
+    now >= project.maintenanceStart &&
+    now <= project.maintenanceEnd
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+export const pingSingleProject = async (project: { id: string; name: string; url: string; organizationId: string; maintenanceMode: boolean; maintenanceStart: Date | null; maintenanceEnd: Date | null }): Promise<PingResult> => {
   const startTime = Date.now();
   let statusCode: number | null = null;
   let isUp = false;
@@ -148,7 +171,29 @@ export const pingSingleProject = async (project: { id: string; name: string; url
 
   let incidentCreated = false;
 
-  // 5. If the current ping failed, validate 3 consecutive failures before creating incident
+  // 5. Check maintenance mode before processing alert logic
+  const inMaintenance = isInMaintenance(project);
+  if (inMaintenance) {
+    logger.info(
+      `[Maintenance] Project "${project.name}" is in maintenance mode — ping recorded, alerts suppressed.` +
+        (project.maintenanceMode
+          ? " (Manual toggle)"
+          : ` (Scheduled window: ${project.maintenanceStart?.toISOString()} → ${project.maintenanceEnd?.toISOString()})`)
+    );
+    // Skip incident & alert logic — return early with metric already recorded
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      url: project.url,
+      isUp,
+      statusCode,
+      responseTimeMs,
+      incidentCreated: false,
+      sslExpirationDate,
+    };
+  }
+
+  // 6. If the current ping failed, validate 3 consecutive failures before creating incident
   if (!isUp) {
     logger.warn(`[Uptime Alert] Ping failed for Project "${project.name}" (${project.url}) - Status: ${statusCode ?? "DOWN/TIMEOUT"}, Latency: ${responseTimeMs}ms`);
 
@@ -243,7 +288,7 @@ export const pingSingleProject = async (project: { id: string; name: string; url
 export const processPingJob = async (job: Job) => {
   logger.info(`[Ping Worker] Processing scheduled 30-second project ping job #${job.id}`);
 
-  // Fetch all projects that have a non-empty URL configured
+  // Fetch all projects that have a non-empty URL configured (+ maintenance fields)
   const projects = await prisma.project.findMany({
     where: {
       url: {
@@ -255,11 +300,15 @@ export const processPingJob = async (job: Job) => {
       name: true,
       url: true,
       organizationId: true,
+      maintenanceMode: true,
+      maintenanceStart: true,
+      maintenanceEnd: true,
     },
   });
 
   const validProjects = projects.filter(
-    (p): p is { id: string; name: string; url: string; organizationId: string } => Boolean(p.url && p.url.trim().length > 0)
+    (p): p is { id: string; name: string; url: string; organizationId: string; maintenanceMode: boolean; maintenanceStart: Date | null; maintenanceEnd: Date | null } =>
+      Boolean(p.url && p.url.trim().length > 0)
   );
 
   if (validProjects.length === 0) {
