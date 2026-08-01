@@ -86,6 +86,38 @@ export class AdminService {
   }
 
   /**
+   * Delete an organization across the platform
+   */
+  async deleteOrganization(organizationId: string) {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+
+    if (!org) {
+      const error: any = new Error("Organization not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const projects = await prisma.project.findMany({
+      where: { organizationId },
+      select: { id: true },
+    });
+    const projectIds = projects.map((p) => p.id);
+
+    await prisma.$transaction([
+      prisma.timelineEvent.deleteMany({ where: { incident: { projectId: { in: projectIds } } } }),
+      prisma.incident.deleteMany({ where: { projectId: { in: projectIds } } }),
+      prisma.pingMetric.deleteMany({ where: { projectId: { in: projectIds } } }),
+      prisma.project.deleteMany({ where: { organizationId } }),
+      prisma.member.deleteMany({ where: { organizationId } }),
+      prisma.organization.delete({ where: { id: organizationId } }),
+    ]);
+
+    return { success: true, message: `Organization '${org.name}' deleted successfully.` };
+  }
+
+  /**
    * Get all users across the platform for Super Admin overview
    */
   async getAllUsers() {

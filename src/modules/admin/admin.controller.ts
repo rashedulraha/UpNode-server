@@ -32,6 +32,16 @@ export class AdminController {
     }
   }
 
+  async deleteOrganization(req: Request, res: Response, next: NextFunction) {
+    try {
+      const organizationId = String(req.params.organizationId);
+      const result = await adminService.deleteOrganization(organizationId);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getAllOrganizations(req: Request, res: Response, next: NextFunction) {
     try {
       const organizations = await adminService.getAllOrganizations();
