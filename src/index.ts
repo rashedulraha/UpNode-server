@@ -11,6 +11,7 @@ import { projectRoutes } from "./modules/projects/project.routes";
 import { incidentRoutes } from "./modules/incidents/incident.routes";
 import { streamRoutes } from "./modules/stream/stream.routes";
 import { organizationRoutes } from "./modules/organization/organization.routes";
+import { adminRoutes } from "./modules/admin/admin.routes";
 import { errorHandler } from "./middlewares/error.middleware";
 import { requestLogger } from "./middlewares/requestLogger.middleware";
 import { ingestionRateLimiter } from "./middlewares/rateLimit.middleware";
@@ -53,6 +54,7 @@ app.all("/api/auth/*path", toNodeHandler(auth.handler));
 app.use("/api/projects", projectRoutes);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/organization", organizationRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/api", streamRoutes);
 
 // Health check endpoint

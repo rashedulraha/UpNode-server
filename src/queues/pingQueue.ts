@@ -18,23 +18,23 @@ export const pingQueue = new Queue(PING_QUEUE_NAME, {
 });
 
 /**
- * Schedule repeatable cron job every 5 minutes to ping all project URLs
+ * Schedule repeatable job every 30 seconds to ping all project URLs
  */
 export const setupCronPingJob = async () => {
   try {
-    // Add repeatable job scheduled every 5 minutes
+    // Add repeatable job scheduled every 30 seconds (every: 30000ms)
     await pingQueue.add(
       "scheduled-project-ping",
       {},
       {
         repeat: {
-          pattern: "*/5 * * * *", // Every 5 minutes cron pattern
+          every: 30000, // Every 30 seconds interval
         },
-        jobId: "five-minute-project-ping-job",
+        jobId: "thirty-second-project-ping-job",
       } as any
     );
-    logger.info(`[Ping Queue] Successfully registered 5-minute cron ping job (*/5 * * * *)`);
+    logger.info(`[Ping Queue] Successfully registered 30-second repeatable ping job (every 30s)`);
   } catch (error: any) {
-    logger.error(`[Ping Queue Error] Failed to schedule 5-minute cron ping job: ${error.message}`);
+    logger.error(`[Ping Queue Error] Failed to schedule 30-second repeatable ping job: ${error.message}`);
   }
 };

@@ -1,10 +1,14 @@
 import { Worker, Job } from "bullmq";
-import { redisConnectionOptions } from "../lib/redis";
+import { redisConnectionOptions, redisPublisher } from "../lib/redis";
 import { PING_QUEUE_NAME } from "../queues/pingQueue";
 import { addIncidentAlertJob } from "../queues/alertQueue";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { analyzeIncidentWithAI } from "../services/ai.service";
+import tls from "tls";
+import url from "url";
+
+export const METRIC_CHANNEL = "METRIC_UPDATES";
 
 export interface PingResult {
   projectId: string;
@@ -14,18 +18,69 @@ export interface PingResult {
   statusCode: number | null;
   responseTimeMs: number;
   incidentCreated: boolean;
+  sslExpirationDate?: Date | null;
 }
 
 /**
+ * Extracts the SSL certificate expiration date for a given HTTPS URL
+ */
+export const getSSLCertExpiration = (targetUrl: string): Promise<Date | null> => {
+  return new Promise((resolve) => {
+    try {
+      const parsedUrl = url.parse(targetUrl);
+      if (parsedUrl.protocol !== "https:") {
+        return resolve(null);
+      }
+      const hostname = parsedUrl.hostname;
+      if (!hostname) {
+        return resolve(null);
+      }
+      const port = parsedUrl.port ? parseInt(parsedUrl.port) : 443;
+
+      const socket = tls.connect(
+        {
+          host: hostname,
+          port,
+          servername: hostname,
+          rejectUnauthorized: false, // Extract cert details even if untrusted/expired
+        },
+        () => {
+          const cert = socket.getPeerCertificate();
+          socket.destroy();
+          if (cert && cert.valid_to) {
+            resolve(new Date(cert.valid_to));
+          } else {
+            resolve(null);
+          }
+        }
+      );
+
+      socket.on("error", () => {
+        resolve(null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+};
+
+/**
  * Pings a single project URL, measures response time, records PingMetric in DB,
- * and creates a CRITICAL incident + alert job if status is not 200.
+ * and creates a CRITICAL incident + alert job if 3 consecutive failures occur.
  */
 export const pingSingleProject = async (project: { id: string; name: string; url: string; organizationId: string }): Promise<PingResult> => {
   const startTime = Date.now();
   let statusCode: number | null = null;
   let isUp = false;
   let responseTimeMs = 0;
+  let sslExpirationDate: Date | null = null;
 
+  // 1. Capture SSL certificate expiration date for HTTPS endpoints
+  if (project.url.startsWith("https://")) {
+    sslExpirationDate = await getSSLCertExpiration(project.url);
+  }
+
+  // 2. Perform HTTP ping
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
@@ -42,87 +97,132 @@ export const pingSingleProject = async (project: { id: string; name: string; url
 
     responseTimeMs = Date.now() - startTime;
     statusCode = response.status;
-    isUp = response.status === 200;
+    // Healthy is 2xx or 3xx status codes
+    isUp = response.status >= 200 && response.status < 400;
   } catch (err: any) {
     responseTimeMs = Date.now() - startTime;
     statusCode = null;
     isUp = false;
   }
 
-  // 1. Store performance metric in DB for historical graphs
+  // 3. Store performance metric in DB for historical graphs & update Project SSL expiration
+  let pingMetricRecord: any = null;
   try {
-    await prisma.pingMetric.create({
+    pingMetricRecord = await prisma.pingMetric.create({
       data: {
         projectId: project.id,
         url: project.url,
         statusCode: statusCode,
         responseTimeMs: responseTimeMs,
         isUp: isUp,
+        sslExpirationDate: sslExpirationDate,
       },
     });
+
+    // Update the project's SSL expiration date in the DB
+    if (sslExpirationDate) {
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { sslExpiresAt: sslExpirationDate },
+      });
+    }
   } catch (dbErr: any) {
-    logger.error(`[Ping Metric DB Error] Failed to save ping metric for ${project.id}: ${dbErr.message}`);
+    logger.error(`[Ping Metric DB Error] Failed to save ping metric/update project for ${project.id}: ${dbErr.message}`);
+  }
+
+  // 4. Stream metric update via SSE (publish to Redis METRIC_CHANNEL)
+  if (pingMetricRecord) {
+    try {
+      await redisPublisher.publish(
+        METRIC_CHANNEL,
+        JSON.stringify({
+          type: "METRIC_CREATED",
+          organizationId: project.organizationId,
+          data: pingMetricRecord,
+        })
+      );
+    } catch (pubErr: any) {
+      logger.error(`[SSE Pub Error] Failed to stream metric over Redis: ${pubErr.message}`);
+    }
   }
 
   let incidentCreated = false;
 
-  // 2. If status is NOT 200, handle outage & trigger CRITICAL incident
+  // 5. If the current ping failed, validate 3 consecutive failures before creating incident
   if (!isUp) {
     logger.warn(`[Uptime Alert] Ping failed for Project "${project.name}" (${project.url}) - Status: ${statusCode ?? "DOWN/TIMEOUT"}, Latency: ${responseTimeMs}ms`);
 
-    // Check for existing open incident to avoid spamming duplicate incidents
-    const existingOpenIncident = await prisma.incident.findFirst({
-      where: {
-        projectId: project.id,
-        status: { in: ["INVESTIGATING", "IDENTIFIED", "MONITORING"] },
-        title: { contains: "HTTP Ping Failed" },
-      },
-    });
-
-    if (!existingOpenIncident) {
-      const title = `HTTP Ping Failed: ${project.name} (Status: ${statusCode ?? "TIMEOUT/ERROR"})`;
-      const description = `Automated 5-minute uptime monitor detected an outage for ${project.url}. Response status: ${statusCode ?? "No Response"}, Latency: ${responseTimeMs}ms.`;
-
-      const aiAnalysis = await analyzeIncidentWithAI({
-        title,
-        description,
-        statusCode,
-        responseTimeMs,
-        url: project.url,
+    // Fetch the last 2 ping metrics for this project
+    let lastMetrics: any[] = [];
+    try {
+      lastMetrics = await prisma.pingMetric.findMany({
+        where: { projectId: project.id },
+        orderBy: { createdAt: "desc" },
+        take: 3, // Current check is already inserted, so we fetch top 3 (current + last 2)
       });
+    } catch (err: any) {
+      logger.error(`[Ping Worker Error] Failed to fetch historical metrics for consecutive failure check: ${err.message}`);
+    }
 
-      const incident = await prisma.incident.create({
-        data: {
-          title,
-          description,
-          status: "INVESTIGATING",
-          severity: "CRITICAL",
+    // Check if the 3 most recent checks all failed
+    const consecutiveFailuresCount = (lastMetrics || []).filter((m) => m && !m.isUp).length;
+    const isConsecutiveFailuresMet = consecutiveFailuresCount >= 3;
+
+    if (isConsecutiveFailuresMet) {
+      // Check for existing open incident to avoid duplicate incidents
+      const existingOpenIncident = await prisma.incident.findFirst({
+        where: {
           projectId: project.id,
-          aiRootCause: aiAnalysis.rootCause,
-          aiFixSuggestion: aiAnalysis.fixSuggestion,
-          timelineEvents: {
-            create: {
-              message: `Automated uptime ping failed. Status: ${statusCode ?? "DOWN/TIMEOUT"}, Latency: ${responseTimeMs}ms`,
-              status: "INVESTIGATING",
-            },
-          },
+          status: { in: ["INVESTIGATING", "IDENTIFIED", "MONITORING"] },
+          title: { contains: "HTTP Ping Failed" },
         },
       });
 
-      incidentCreated = true;
-      logger.info(`[Auto Incident Created] Created CRITICAL incident #${incident.id} for project ${project.name}`);
+      if (!existingOpenIncident) {
+        const title = `HTTP Ping Failed: ${project.name} (Status: ${statusCode ?? "TIMEOUT/ERROR"})`;
+        const description = `Automated uptime monitor detected 3 consecutive failed checks for ${project.url}. Last response status: ${statusCode ?? "No Response"}, Latency: ${responseTimeMs}ms.`;
 
-      // Trigger BullMQ Alert Queue for Slack/Email dispatches
-      await addIncidentAlertJob({
-        incidentId: incident.id,
-        title: incident.title,
-        description: incident.description,
-        severity: incident.severity,
-        status: incident.status,
-        projectId: project.id,
-        organizationId: project.organizationId,
-        createdAt: incident.createdAt.toISOString(),
-      });
+        const aiAnalysis = await analyzeIncidentWithAI({
+          title,
+          description,
+          statusCode,
+          responseTimeMs,
+          url: project.url,
+        });
+
+        const incident = await prisma.incident.create({
+          data: {
+            title,
+            description,
+            status: "INVESTIGATING",
+            severity: "CRITICAL",
+            projectId: project.id,
+            aiRootCause: aiAnalysis.rootCause,
+            aiFixSuggestion: aiAnalysis.fixSuggestion,
+            timelineEvents: {
+              create: {
+                message: `Uptime check failed 3 consecutive times. Status: ${statusCode ?? "DOWN/TIMEOUT"}, Latency: ${responseTimeMs}ms`,
+                status: "INVESTIGATING",
+              },
+            },
+          },
+        });
+
+        incidentCreated = true;
+        logger.info(`[Auto Incident Created] Created CRITICAL incident #${incident.id} for project ${project.name}`);
+
+        // Trigger BullMQ Alert Queue for Slack/Email dispatches
+        await addIncidentAlertJob({
+          incidentId: incident.id,
+          title: incident.title,
+          description: incident.description,
+          severity: incident.severity,
+          status: incident.status,
+          projectId: project.id,
+          organizationId: project.organizationId,
+          createdAt: incident.createdAt.toISOString(),
+        });
+      }
     }
   } else {
     logger.info(`[Uptime Check OK] Project "${project.name}" is UP (${statusCode}) - Latency: ${responseTimeMs}ms`);
@@ -136,11 +236,12 @@ export const pingSingleProject = async (project: { id: string; name: string; url
     statusCode,
     responseTimeMs,
     incidentCreated,
+    sslExpirationDate,
   };
 };
 
 export const processPingJob = async (job: Job) => {
-  logger.info(`[Ping Worker] Processing scheduled 5-minute project ping job #${job.id}`);
+  logger.info(`[Ping Worker] Processing scheduled 30-second project ping job #${job.id}`);
 
   // Fetch all projects that have a non-empty URL configured
   const projects = await prisma.project.findMany({

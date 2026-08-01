@@ -64,6 +64,11 @@ describe("pingWorker Uptime Monitoring & Metrics", () => {
     );
 
     prismaMock.pingMetric.create.mockResolvedValue({} as any);
+    prismaMock.pingMetric.findMany.mockResolvedValue([
+      { isUp: false },
+      { isUp: false },
+      { isUp: false },
+    ] as any);
     prismaMock.incident.findFirst.mockResolvedValue(null);
     prismaMock.incident.create.mockResolvedValue({
       id: "inc-critical-999",

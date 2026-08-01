@@ -11,6 +11,30 @@ import { logger } from "../lib/logger";
 export const sendSlackNotification = async (payload: IncidentAlertPayload): Promise<boolean> => {
   const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
 
+  // 1. Fetch project & organization integration settings from database
+  let targetSlackWebhookUrl: string | null = null;
+  let projectName = projectId;
+  let organizationName = organizationId;
+
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: { organization: true },
+    });
+
+    if (project) {
+      projectName = project.name;
+      organizationName = project.organization.name;
+      targetSlackWebhookUrl = project.slackWebhookUrl || project.organization.slackWebhookUrl || env.SLACK_WEBHOOK_URL || null;
+    }
+  } catch (err: any) {
+    logger.warn(`[Slack Alert] Failed to fetch project database settings for ${projectId}: ${err.message}`);
+  }
+
+  if (!targetSlackWebhookUrl) {
+    targetSlackWebhookUrl = env.SLACK_WEBHOOK_URL || null;
+  }
+
   const severityEmoji: Record<string, string> = {
     CRITICAL: "🔴 CRITICAL",
     HIGH: "🟠 HIGH",
@@ -20,6 +44,7 @@ export const sendSlackNotification = async (payload: IncidentAlertPayload): Prom
 
   const severityFormatted = severityEmoji[severity] || severity;
 
+  // Rich block-formatted Slack payload for #incidents channel
   const slackPayload = {
     text: `🚨 [${severity}] UpNode Incident Alert: ${title}`,
     blocks: [
@@ -44,11 +69,11 @@ export const sendSlackNotification = async (payload: IncidentAlertPayload): Prom
           },
           {
             type: "mrkdwn",
-            text: `*Project ID:*\n\`${projectId}\``,
+            text: `*Project:*\n*${projectName}*`,
           },
           {
             type: "mrkdwn",
-            text: `*Organization ID:*\n\`${organizationId}\``,
+            text: `*Organization:*\n*${organizationName}*`,
           },
         ],
       },
@@ -60,20 +85,23 @@ export const sendSlackNotification = async (payload: IncidentAlertPayload): Prom
         },
       },
       {
+        type: "divider",
+      },
+      {
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: `Incident ID: \`${incidentId}\` | Reported: ${createdAt}`,
+            text: `Incident ID: \`${incidentId}\` | Reported: ${createdAt} | UpNode Incident Engine`,
           },
         ],
       },
     ],
   };
 
-  if (env.SLACK_WEBHOOK_URL) {
+  if (targetSlackWebhookUrl) {
     try {
-      const response = await fetch(env.SLACK_WEBHOOK_URL, {
+      const response = await fetch(targetSlackWebhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(slackPayload),
@@ -84,81 +112,117 @@ export const sendSlackNotification = async (payload: IncidentAlertPayload): Prom
         throw new Error(`Slack Webhook API responded with status ${response.status}: ${errorText}`);
       }
 
-      logger.info(`[Slack Alert] Successfully dispatched Slack notification for incident ${incidentId}`);
+      logger.info(`[Slack Alert] Successfully dispatched Slack notification for incident ${incidentId} to Webhook URL`);
       return true;
     } catch (err: any) {
       logger.error(`[Slack Alert Error] Failed to send Slack notification for incident ${incidentId}: ${err.message}`);
       throw err;
     }
   } else {
-    // Simulated fallback log when SLACK_WEBHOOK_URL is not set
+    // Simulated fallback log when no Slack Webhook URL is configured
     console.log(
-      `[Slack Notification Simulated] 🚨 [${severity}] ${title} | Status: ${status} | Org: ${organizationId} | Project: ${projectId}`
+      `[Slack Notification Simulated] 🚨 [${severity}] ${title} | Status: ${status} | Org: ${organizationName} | Project: ${projectName}`
     );
     return true;
   }
 };
 
 /**
- * Fetch organization team members from Prisma database and send email alerts
+ * Fetch organization team members & alert settings from Prisma database and send transactional email alerts
  */
 export const sendEmailNotification = async (payload: IncidentAlertPayload): Promise<{ count: number; recipients: string[] }> => {
-  const { incidentId, title, description, severity, status, organizationId, createdAt } = payload;
+  const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
 
-  // Query organization members and their user email profiles using Prisma
-  const members = await prisma.member.findMany({
-    where: { organizationId },
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
+  const recipientEmailsSet = new Set<string>();
+
+  // 1. Fetch project & organization alert email configurations
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: { organization: true },
+    });
+
+    if (project?.alertEmail) {
+      project.alertEmail.split(/[,;\s]+/).forEach((e) => {
+        if (e && e.includes("@")) recipientEmailsSet.add(e.trim().toLowerCase());
+      });
+    }
+
+    if (project?.organization?.alertEmail) {
+      project.organization.alertEmail.split(/[,;\s]+/).forEach((e) => {
+        if (e && e.includes("@")) recipientEmailsSet.add(e.trim().toLowerCase());
+      });
+    }
+  } catch {
+    // Ignore error, fallback to members query
+  }
+
+  // 2. Query organization members and their user email profiles using Prisma
+  try {
+    const members = await prisma.member.findMany({
+      where: { organizationId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
         },
       },
-    },
-  });
+    });
 
-  const recipientEmails = members
-    .map((m) => m.user?.email)
-    .filter((email): email is string => Boolean(email && email.includes("@")));
+    members.forEach((m) => {
+      if (m.user?.email && m.user.email.includes("@")) {
+        recipientEmailsSet.add(m.user.email.trim().toLowerCase());
+      }
+    });
+  } catch (err: any) {
+    logger.warn(`[Email Alert] Failed to query member emails for organization ${organizationId}: ${err.message}`);
+  }
+
+  const recipientEmails = Array.from(recipientEmailsSet);
 
   if (recipientEmails.length === 0) {
-    logger.warn(`[Email Alert] No team members found for organization ${organizationId}. Skipping email dispatch.`);
+    logger.warn(`[Email Alert] No alert email recipients found for organization ${organizationId}. Skipping email dispatch.`);
     return { count: 0, recipients: [] };
   }
 
   const htmlContent = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; rounded: 8px;">
-      <h2 style="color: #e53e3e; margin-top: 0;">🚨 UpNode Incident Alert: ${title}</h2>
-      <p style="color: #4a5568; font-size: 14px;">A new incident has been reported for your organization team.</p>
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+      <div style="background-color: #fff5f5; border-left: 4px solid #e53e3e; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+        <h2 style="color: #c53030; margin: 0 0 6px 0; font-size: 18px;">🚨 UpNode Incident Alert</h2>
+        <h3 style="color: #2d3748; margin: 0; font-size: 16px;">${title}</h3>
+      </div>
       
-      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+      <p style="color: #4a5568; font-size: 14px; line-height: 1.5;">A new operational incident has been triggered on your monitored infrastructure.</p>
+      
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; font-weight: bold; color: #2d3748;">Severity:</td>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; color: #c53030; font-weight: bold;">${severity}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568; width: 30%;">Severity:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #c53030; font-weight: 700;">${severity}</td>
         </tr>
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; font-weight: bold; color: #2d3748;">Status:</td>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; color: #2b6cb0;">${status}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Status:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #2b6cb0; font-weight: 600;">${status}</td>
         </tr>
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; font-weight: bold; color: #2d3748;">Incident ID:</td>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; color: #4a5568; font-family: monospace;">${incidentId}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Incident ID:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #4a5568; font-family: monospace;">${incidentId}</td>
         </tr>
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; font-weight: bold; color: #2d3748;">Reported Time:</td>
-          <td style="padding: 8px; border-bottom: 1px solid #edf2f7; color: #4a5568;">${createdAt}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Reported Time:</td>
+          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #4a5568;">${createdAt}</td>
         </tr>
       </table>
 
-      <div style="background-color: #f7fafc; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-        <h4 style="margin-top: 0; color: #2d3748;">Description:</h4>
-        <p style="color: #4a5568; margin-bottom: 0; font-size: 14px;">${description || "No detailed description provided."}</p>
+      <div style="background-color: #f7fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #edf2f7;">
+        <h4 style="margin: 0 0 8px 0; color: #2d3748; font-size: 14px;">Details:</h4>
+        <p style="color: #4a5568; margin: 0; font-size: 14px; line-height: 1.5;">${description || "No detailed description provided."}</p>
       </div>
 
-      <p style="font-size: 12px; color: #a0aec0; text-align: center; margin-top: 30px;">
-        UpNode Real-Time Telemetry & Incident Management Platform
+      <p style="font-size: 12px; color: #a0aec0; text-align: center; margin-top: 28px; border-t: 1px solid #edf2f7; padding-top: 16px;">
+        UpNode Real-Time Telemetry &amp; Incident Management Engine
       </p>
     </div>
   `;
@@ -172,7 +236,7 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: env.EMAIL_FROM,
+          from: env.EMAIL_FROM || "alerts@upnode.io",
           to: recipientEmails,
           subject: `[${severity}] UpNode Incident Alert: ${title}`,
           html: htmlContent,
@@ -193,7 +257,7 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
   } else {
     // Simulated fallback log when RESEND_API_KEY is not set
     console.log(
-      `[Email Notification Simulated] ✉️ Sent incident alert email to ${recipientEmails.length} team members: ${recipientEmails.join(", ")}`
+      `[Email Notification Simulated] ✉️ Sent incident alert email to ${recipientEmails.length} recipients: ${recipientEmails.join(", ")}`
     );
     return { count: recipientEmails.length, recipients: recipientEmails };
   }
