@@ -6,13 +6,15 @@ datasource db {
   provider = "postgresql"
 }
 model Organization {
-  id        String    @id @default(uuid())
-  name      String
-  slug      String    @unique
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  members   Member[]
-  projects  Project[]
+  id              String    @id @default(uuid())
+  name            String
+  slug            String    @unique
+  slackWebhookUrl String?
+  alertEmail      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  members         Member[]
+  projects        Project[]
 }
 
 model User {
@@ -23,6 +25,8 @@ model User {
   image         String?
   createdAt     DateTime
   updatedAt     DateTime
+  role          Role       @default(VIEWER)
+  isBlocked     Boolean    @default(false)
   sessions      Session[]
   accounts      Account[]
   
@@ -69,6 +73,7 @@ model Verification {
 }
 
 enum Role {
+  SUPER_ADMIN
   ADMIN
   ENGINEER
   VIEWER
@@ -86,28 +91,32 @@ model Member {
 }
 
 model Project {
-  id             String       @id @default(uuid())
-  name           String
-  slug           String?      @unique
-  url            String?
-  apiKey         String       @unique
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  incidents      Incident[]
-  pingMetrics    PingMetric[]
+  id              String       @id @default(uuid())
+  name            String
+  slug            String?      @unique
+  url             String?
+  apiKey          String       @unique
+  organizationId  String
+  slackWebhookUrl String?
+  alertEmail      String?
+  sslExpiresAt    DateTime?
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  incidents       Incident[]
+  pingMetrics     PingMetric[]
 
   @@index([organizationId])
 }
 
 model PingMetric {
-  id             String   @id @default(uuid())
-  projectId      String
-  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  url            String
-  statusCode     Int?
-  responseTimeMs Int
-  isUp           Boolean
-  createdAt      DateTime @default(now())
+  id                String    @id @default(uuid())
+  projectId         String
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  url               String
+  statusCode        Int?
+  responseTimeMs    Int
+  isUp              Boolean
+  sslExpirationDate DateTime?
+  createdAt         DateTime  @default(now())
 
   @@index([projectId, createdAt(sort: Desc)])
 }

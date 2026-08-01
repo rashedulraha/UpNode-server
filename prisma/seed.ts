@@ -43,6 +43,7 @@ async function main() {
       name: "Alex Rivers",
       email: "alex@upnode.io",
       emailVerified: true,
+      role: Role.SUPER_ADMIN,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
