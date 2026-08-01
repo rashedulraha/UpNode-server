@@ -37,18 +37,20 @@ export class ProjectService {
     return project;
   }
 
-  async createProject(data: { name: string; apiKey?: string }, organizationId: string) {
+  async createProject(data: { name: string; slug?: string; url?: string; apiKey?: string }, organizationId: string) {
     const apiKey = data.apiKey || `up_${crypto.randomBytes(16).toString("hex")}`;
     return prisma.project.create({
       data: {
         name: data.name,
+        slug: data.slug,
+        url: data.url,
         apiKey,
         organizationId,
       },
     });
   }
 
-  async updateProject(projectId: string, data: { name?: string; apiKey?: string }, organizationId: string) {
+  async updateProject(projectId: string, data: { name?: string; slug?: string; url?: string; apiKey?: string }, organizationId: string) {
     await this.getProjectById(projectId, organizationId);
 
     return prisma.project.update({
