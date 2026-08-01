@@ -59,6 +59,15 @@ export class AdminController {
       next(error);
     }
   }
+
+  async getStats(req: Request, res: Response, next: NextFunction) {
+    try {
+      const stats = await adminService.getStats();
+      res.json(stats);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminController = new AdminController();
