@@ -85,8 +85,9 @@ export class ProjectService {
     }
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    // 2. Fetch active incidents (not resolved)
+    // 2. Fetch active/ongoing incidents (not resolved)
     const activeIncidents = await prisma.incident.findMany({
       where: {
         projectId: project.id,
@@ -100,7 +101,22 @@ export class ProjectService {
       orderBy: { createdAt: "desc" },
     });
 
-    // 3. Fetch past 7 days incidents with timeline history
+    // 3. Fetch resolved incidents history
+    const resolvedIncidents = await prisma.incident.findMany({
+      where: {
+        projectId: project.id,
+        status: "RESOLVED",
+      },
+      include: {
+        timelineEvents: {
+          orderBy: { createdAt: "desc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    // 4. Fetch past 7 days incidents with timeline history
     const past7DaysIncidents = await prisma.incident.findMany({
       where: {
         projectId: project.id,
@@ -114,7 +130,7 @@ export class ProjectService {
       orderBy: { createdAt: "desc" },
     });
 
-    // 4. Fetch recent ping metrics (last 50 pings)
+    // 5. Fetch recent ping metrics (last 50 pings)
     const recentMetrics = await prisma.pingMetric.findMany({
       where: {
         projectId: project.id,
@@ -123,7 +139,60 @@ export class ProjectService {
       take: 50,
     });
 
-    // 5. Compute overall operational status
+    // 6. Fetch metrics for past 90 days to compute 90-day uptime bars
+    const ninetyDaysMetrics = await prisma.pingMetric.findMany({
+      where: {
+        projectId: project.id,
+        createdAt: { gte: ninetyDaysAgo },
+      },
+      select: {
+        isUp: true,
+        responseTimeMs: true,
+        createdAt: true,
+      },
+    });
+
+    const metricsByDay: Record<string, { total: number; up: number; totalLatency: number }> = {};
+    for (const m of ninetyDaysMetrics) {
+      const dayKey = m.createdAt.toISOString().split("T")[0];
+      if (!metricsByDay[dayKey]) {
+        metricsByDay[dayKey] = { total: 0, up: 0, totalLatency: 0 };
+      }
+      metricsByDay[dayKey].total += 1;
+      if (m.isUp) metricsByDay[dayKey].up += 1;
+      metricsByDay[dayKey].totalLatency += m.responseTimeMs;
+    }
+
+    const uptimeHistory90Days = [];
+    const today = new Date();
+    for (let i = 89; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split("T")[0];
+      const dayData = metricsByDay[dateStr];
+
+      if (dayData && dayData.total > 0) {
+        const uptimePct = Number(((dayData.up / dayData.total) * 100).toFixed(1));
+        const avgLat = Math.round(dayData.totalLatency / dayData.total);
+        uptimeHistory90Days.push({
+          date: dateStr,
+          isUp: dayData.up === dayData.total,
+          uptimePercentage: uptimePct,
+          avgLatencyMs: avgLat,
+          status: uptimePct >= 100 ? "OPERATIONAL" : uptimePct >= 80 ? "DEGRADED" : "OUTAGE",
+        });
+      } else {
+        uptimeHistory90Days.push({
+          date: dateStr,
+          isUp: true,
+          uptimePercentage: 100,
+          avgLatencyMs: 0,
+          status: "OPERATIONAL",
+        });
+      }
+    }
+
+    // 7. Compute overall operational status
     let systemStatus: "OPERATIONAL" | "DEGRADED_PERFORMANCE" | "PARTIAL_OUTAGE" | "MAJOR_OUTAGE" = "OPERATIONAL";
 
     const hasCriticalActive = activeIncidents.some((i) => i.severity === "CRITICAL" || i.severity === "HIGH");
@@ -157,8 +226,10 @@ export class ProjectService {
       uptimePercentage,
       avgLatencyMs,
       activeIncidents,
+      resolvedIncidents,
       past7DaysIncidents,
-      recentMetrics: recentMetrics.reverse(), // Ascending order for performance graphs
+      uptimeHistory90Days,
+      recentMetrics: recentMetrics.reverse(),
     };
   }
 

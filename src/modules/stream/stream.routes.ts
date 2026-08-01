@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { requireAuth, requireOrganization } from "../../middlewares/auth.middleware";
+import { requireAuth, requireOrganization, requireSuperAdmin } from "../../middlewares/auth.middleware";
 import { createRedisSubscriber } from "../../lib/redis";
 import { INCIDENT_CHANNEL } from "../incidents/incident.service";
 import { METRIC_CHANNEL } from "../../workers/pingWorker";
@@ -9,6 +9,77 @@ const router = Router();
 
 // Set to track active SSE client responses for graceful shutdown draining
 export const activeSSEConnections = new Set<Response>();
+
+// Global Super Admin System Health Terminal Stream
+router.get("/stream/admin", requireAuth, requireSuperAdmin, async (req: Request, res: Response): Promise<void> => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  if (typeof (res as any).flush === "function") {
+    (res as any).flush();
+  }
+
+  activeSSEConnections.add(res);
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ type: "SYSTEM_CONNECTED", message: "Live Redis Telemetry Log Stream connected", timestamp: new Date().toISOString() })}\n\n`);
+
+  const subscriber = createRedisSubscriber();
+  let isClosed = false;
+
+  const handleMessage = (channel: string, message: string) => {
+    if (isClosed) return;
+    try {
+      const parsed = JSON.parse(message);
+      res.write(`event: system_log\ndata: ${JSON.stringify({ channel, timestamp: new Date().toISOString(), payload: parsed })}\n\n`);
+    } catch {
+      res.write(`event: system_log\ndata: ${JSON.stringify({ channel, timestamp: new Date().toISOString(), rawMessage: message })}\n\n`);
+    }
+  };
+
+  subscriber.on("message", handleMessage);
+
+  try {
+    await Promise.all([
+      subscriber.subscribe(INCIDENT_CHANNEL),
+      subscriber.subscribe(METRIC_CHANNEL),
+    ]);
+  } catch (err: any) {
+    logger.error("[Admin SSE] Redis subscription failed:", err);
+    activeSSEConnections.delete(res);
+    res.end();
+    return;
+  }
+
+  const heartbeatTimer = setInterval(() => {
+    if (!isClosed) {
+      res.write(`: ping\n\n`);
+    }
+  }, 10000);
+
+  const cleanup = () => {
+    if (isClosed) return;
+    isClosed = true;
+
+    activeSSEConnections.delete(res);
+    clearInterval(heartbeatTimer);
+    subscriber.removeListener("message", handleMessage);
+
+    Promise.all([
+      subscriber.unsubscribe(INCIDENT_CHANNEL),
+      subscriber.unsubscribe(METRIC_CHANNEL)
+    ])
+      .then(() => subscriber.quit())
+      .catch((err) => logger.error("[Admin SSE] Error disconnecting:", err));
+  };
+
+  req.on("close", cleanup);
+  req.on("end", cleanup);
+  res.on("error", cleanup);
+});
 
 // Stream endpoint requires user authentication and organization context
 router.get("/stream", requireAuth, requireOrganization, async (req: Request, res: Response): Promise<void> => {
