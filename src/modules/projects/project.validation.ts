@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const createProjectSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100),
+  slug: z.string().min(1).max(100).optional(),
+  url: z.string().optional(),
   apiKey: z.string().min(1, "API key is required").optional(),
 });
 
@@ -11,5 +13,7 @@ export const projectParamsSchema = z.object({
 
 export const updateProjectSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  slug: z.string().min(1).max(100).optional(),
+  url: z.string().optional(),
   apiKey: z.string().min(1).optional(),
 });
