@@ -30,6 +30,66 @@ export class OrganizationService {
   }
 
   /**
+   * Create a new organization and set the creator as ADMIN member
+   */
+  async createOrganization(userId: string, name: string) {
+    const slug = name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .slice(0, 50);
+
+    // Ensure slug is unique
+    const existingOrg = await prisma.organization.findFirst({
+      where: { slug },
+    });
+    const finalSlug = existingOrg
+      ? `${slug}-${crypto.randomBytes(3).toString("hex")}`
+      : slug;
+
+    const org = await prisma.organization.create({
+      data: {
+        name: name.trim(),
+        slug: finalSlug,
+      },
+    });
+
+    // Make the creator the ADMIN of this organization
+    await prisma.member.create({
+      data: {
+        organizationId: org.id,
+        userId,
+        role: Role.ADMIN,
+      },
+    });
+
+    return org;
+  }
+
+  /**
+   * Get all organizations a user belongs to
+   */
+  async getUserOrganizations(userId: string) {
+    const memberships = await prisma.member.findMany({
+      where: { userId },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            createdAt: true,
+            _count: { select: { members: true, projects: true } },
+          },
+        },
+      },
+    });
+    return memberships.map((m) => ({ ...m.organization, memberRole: m.role }));
+  }
+
+  /**
    * Invite or add a new member to an organization by email and assign role
    */
   async inviteMember(organizationId: string, input: InviteMemberInput) {

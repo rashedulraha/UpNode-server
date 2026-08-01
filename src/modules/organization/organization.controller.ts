@@ -63,6 +63,31 @@ export class OrganizationController {
       next(error);
     }
   }
+
+  async createOrganization(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const { name } = req.body;
+      if (!name || typeof name !== "string" || name.trim().length < 2) {
+        res.status(400).json({ error: "Organization name must be at least 2 characters." });
+        return;
+      }
+      const org = await organizationService.createOrganization(userId, name.trim());
+      res.status(201).json(org);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getUserOrganizations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const orgs = await organizationService.getUserOrganizations(userId);
+      res.json(orgs);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const organizationController = new OrganizationController();

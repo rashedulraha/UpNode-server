@@ -7,8 +7,14 @@ import { Role } from "@prisma/client";
 
 const router = Router();
 
-// Apply auth & organization context middleware to all organization endpoints
+// Apply auth to all organization endpoints
 router.use(requireAuth);
+
+// Routes that don't need an existing organization context
+router.post("/create", (req, res, next) => organizationController.createOrganization(req, res, next));
+router.get("/my", (req, res, next) => organizationController.getUserOrganizations(req, res, next));
+
+// Apply organization context middleware to remaining endpoints
 router.use(requireOrganization);
 
 router.get("/members", (req, res, next) => organizationController.getMembers(req, res, next));
