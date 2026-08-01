@@ -17,3 +17,14 @@ export const updateProjectSchema = z.object({
   url: z.string().optional(),
   apiKey: z.string().min(1).optional(),
 });
+
+/**
+ * Schema for the dedicated maintenance window PATCH endpoint.
+ * All fields are optional so callers can set only what they need.
+ */
+export const maintenanceSchema = z.object({
+  maintenanceMode: z.boolean().optional(),
+  maintenanceStart: z.string().datetime({ offset: true }).nullable().optional(),
+  maintenanceEnd: z.string().datetime({ offset: true }).nullable().optional(),
+});
+
