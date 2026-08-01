@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { prismaMock } from "../setup";
-import { pingSingleProject, processPingJob } from "../../src/workers/pingWorker";
+import { pingSingleProject, processPingJob, isInMaintenance } from "../../src/workers/pingWorker";
 import * as alertQueueModule from "../../src/queues/alertQueue";
 
 vi.mock("../../src/queues/alertQueue", () => ({
@@ -13,11 +13,15 @@ describe("pingWorker Uptime Monitoring & Metrics", () => {
     name: "API Gateway Service",
     url: "https://api.example.com/health",
     organizationId: "org-555",
+    maintenanceMode: false,
+    maintenanceStart: null,
+    maintenanceEnd: null,
   };
 
   beforeEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
+
 
   it("should record PingMetric with isUp = true when HTTP status is 200", async () => {
     vi.stubGlobal(
@@ -105,13 +109,71 @@ describe("pingWorker Uptime Monitoring & Metrics", () => {
     );
   });
 
+  // ─── Maintenance Window Tests ────────────────────────────────────────────────
+
+  it("should suppress incidents and alerts when project is in manual maintenance mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ status: 500, ok: false })
+    );
+
+    prismaMock.pingMetric.create.mockResolvedValue({} as any);
+
+    const maintenanceProject = { ...sampleProject, maintenanceMode: true };
+    const result = await pingSingleProject(maintenanceProject);
+
+    // Ping metric still recorded
+    expect(result.isUp).toBe(false);
+    // But NO incident or alert
+    expect(result.incidentCreated).toBe(false);
+    expect(prismaMock.incident.create).not.toHaveBeenCalled();
+    expect(alertQueueModule.addIncidentAlertJob).not.toHaveBeenCalled();
+  });
+
+  it("should suppress incidents during an active scheduled maintenance window", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ status: 503, ok: false })
+    );
+
+    prismaMock.pingMetric.create.mockResolvedValue({} as any);
+
+    const now = new Date();
+    const scheduledProject = {
+      ...sampleProject,
+      maintenanceMode: false,
+      maintenanceStart: new Date(now.getTime() - 60_000), // started 1 min ago
+      maintenanceEnd: new Date(now.getTime() + 60_000),   // ends in 1 min
+    };
+
+    const result = await pingSingleProject(scheduledProject);
+    expect(result.incidentCreated).toBe(false);
+    expect(prismaMock.incident.create).not.toHaveBeenCalled();
+  });
+
+  it("isInMaintenance: returns true for manual toggle", () => {
+    expect(isInMaintenance({ maintenanceMode: true, maintenanceStart: null, maintenanceEnd: null })).toBe(true);
+  });
+
+  it("isInMaintenance: returns false for elapsed scheduled window", () => {
+    const now = new Date();
+    expect(
+      isInMaintenance({
+        maintenanceMode: false,
+        maintenanceStart: new Date(now.getTime() - 120_000),
+        maintenanceEnd: new Date(now.getTime() - 60_000), // already ended
+      })
+    ).toBe(false);
+  });
+
+  it("isInMaintenance: returns false when no window is set", () => {
+    expect(isInMaintenance({ maintenanceMode: false, maintenanceStart: null, maintenanceEnd: null })).toBe(false);
+  });
+
   it("should process ping job for all database projects with active URLs", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        status: 200,
-        ok: true,
-      })
+      vi.fn().mockResolvedValue({ status: 200, ok: true })
     );
 
     prismaMock.project.findMany.mockResolvedValue([
@@ -120,6 +182,9 @@ describe("pingWorker Uptime Monitoring & Metrics", () => {
         name: "Web Portal",
         url: "https://portal.example.com",
         organizationId: "org-1",
+        maintenanceMode: false,
+        maintenanceStart: null,
+        maintenanceEnd: null,
       },
     ] as any);
 
