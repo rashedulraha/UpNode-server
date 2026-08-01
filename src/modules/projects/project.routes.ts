@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { projectController } from "./project.controller";
+import { maintenanceController } from "./maintenance.controller";
 import { requireAuth, requireOrganization, requireRole } from "../../middlewares/auth.middleware";
 import { validateRequest } from "../../middlewares/validate.middleware";
-import { createProjectSchema, projectParamsSchema, updateProjectSchema } from "./project.validation";
+import { createProjectSchema, projectParamsSchema, updateProjectSchema, maintenanceSchema } from "./project.validation";
 
 const router = Router();
 
@@ -48,4 +49,20 @@ router.delete(
   projectController.delete.bind(projectController)
 );
 
+// ─── Maintenance Window Endpoints ───────────────────────────────────────────────
+router.get(
+  "/:id/maintenance",
+  requireRole("ADMIN", "ENGINEER", "VIEWER"),
+  validateRequest({ params: projectParamsSchema }),
+  maintenanceController.getMaintenance.bind(maintenanceController)
+);
+
+router.patch(
+  "/:id/maintenance",
+  requireRole("ADMIN"),
+  validateRequest({ params: projectParamsSchema, body: maintenanceSchema }),
+  maintenanceController.updateMaintenance.bind(maintenanceController)
+);
+
 export { router as projectRoutes };
+
