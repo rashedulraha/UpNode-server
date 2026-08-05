@@ -70,6 +70,25 @@ export class ProjectService {
   }
 
   /**
+   * Rotate a project's API Key for security purposes
+   */
+  async rotateApiKey(projectId: string, organizationId: string, customApiKey?: string) {
+    await this.getProjectById(projectId, organizationId);
+
+    const newApiKey = customApiKey || `up_${crypto.randomBytes(16).toString("hex")}`;
+
+    const updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data: { apiKey: newApiKey },
+    });
+
+    logger.info(`[API Key Rotation] Rotated API key for project '${projectId}' in organization '${organizationId}'`);
+
+    return updatedProject;
+  }
+
+
+  /**
    * Public unauthenticated status page data provider
    */
   async getPublicProjectStatus(slugOrId: string) {

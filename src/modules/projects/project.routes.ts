@@ -4,7 +4,7 @@ import { maintenanceController } from "./maintenance.controller";
 import { requireAuth, requireOrganization, requireRole } from "../../middlewares/auth.middleware";
 import { validateRequest } from "../../middlewares/validate.middleware";
 import { projectMutationRateLimiter } from "../../middlewares/rateLimit.middleware";
-import { createProjectSchema, projectParamsSchema, updateProjectSchema, maintenanceSchema } from "./project.validation";
+import { createProjectSchema, projectParamsSchema, updateProjectSchema, maintenanceSchema, rotateApiKeySchema } from "./project.validation";
 
 const router = Router();
 
@@ -47,12 +47,21 @@ router.patch(
   projectController.update.bind(projectController)
 );
 
+router.post(
+  "/:id/rotate-api-key",
+  requireRole("ADMIN", "ENGINEER"),
+  projectMutationRateLimiter,
+  validateRequest({ params: projectParamsSchema, body: rotateApiKeySchema }),
+  projectController.rotateApiKey.bind(projectController)
+);
+
 router.delete(
   "/:id",
   requireRole("ADMIN"),
   validateRequest({ params: projectParamsSchema }),
   projectController.delete.bind(projectController)
 );
+
 
 // ─── Maintenance Window Endpoints ───────────────────────────────────────────────
 router.get(

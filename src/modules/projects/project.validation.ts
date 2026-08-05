@@ -28,3 +28,8 @@ export const maintenanceSchema = z.object({
   maintenanceEnd: z.string().datetime({ offset: true }).nullable().optional(),
 });
 
+export const rotateApiKeySchema = z.object({
+  customApiKey: z.string().min(8, "Custom API key must be at least 8 characters").optional(),
+});
+
+

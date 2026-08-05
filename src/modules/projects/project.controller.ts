@@ -45,16 +45,35 @@ export class ProjectController {
     }
   }
 
-  async delete(req: Request, res: Response, NextFunction: NextFunction) {
+  async delete(req: Request, res: Response, next: NextFunction) {
     try {
       const id = String(req.params.id);
       const organizationId = req.organizationId!;
       await projectService.deleteProject(id, organizationId);
       res.status(204).send();
     } catch (error) {
-      NextFunction(error);
+      next(error);
     }
   }
+
+  async rotateApiKey(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const organizationId = req.organizationId!;
+      const customApiKey = req.body?.customApiKey;
+
+      const updatedProject = await projectService.rotateApiKey(id, organizationId, customApiKey);
+
+      res.status(200).json({
+        message: "API Key rotated successfully",
+        project: updatedProject,
+        rotatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
 
   async getPublicStatus(req: Request, res: Response, next: NextFunction) {
     try {
