@@ -19,12 +19,15 @@ describe("ProjectService API Key Rotation", () => {
       organizationId,
     } as any);
 
-    prismaMock.project.update.mockImplementation(async (args: any) => ({
-      id: projectId,
-      name: "Payment Gateway",
-      apiKey: args.data.apiKey,
-      organizationId,
-    }) as any);
+    (prismaMock.project.update as any).mockImplementation((args: any) =>
+      Promise.resolve({
+        id: projectId,
+        name: "Payment Gateway",
+        apiKey: args.data.apiKey,
+        organizationId,
+      } as any)
+    );
+
 
     const updated = await projectService.rotateApiKey(projectId, organizationId);
 
