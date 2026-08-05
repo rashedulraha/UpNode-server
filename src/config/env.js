@@ -18,6 +18,10 @@ const envSchema = z.object({
     RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().default("UpNode Alerts <alerts@upnode.dev>"),
     OPENAI_API_KEY: z.string().optional(),
+    GOOGLE_CLIENT_ID: z.string().optional(),
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
+    GITHUB_CLIENT_ID: z.string().optional(),
+    GITHUB_CLIENT_SECRET: z.string().optional(),
 });
 const validateEnv = () => {
     const parsed = envSchema.safeParse(process.env);

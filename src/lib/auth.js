@@ -11,6 +11,18 @@ export const auth = betterAuth({
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     trustedOrigins: [env.CLIENT_URL, "http://localhost:3000"],
+    socialProviders: {
+        google: {
+            clientId: env.GOOGLE_CLIENT_ID || "",
+            clientSecret: env.GOOGLE_CLIENT_SECRET || "",
+            enabled: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+        },
+        github: {
+            clientId: env.GITHUB_CLIENT_ID || "",
+            clientSecret: env.GITHUB_CLIENT_SECRET || "",
+            enabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
+        },
+    },
     user: {
         additionalFields: {
             role: {
