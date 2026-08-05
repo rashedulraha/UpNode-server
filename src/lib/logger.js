@@ -1,38 +1,74 @@
+import pino from "pino";
 import { env } from "../config/env";
+
+const isProduction = env.NODE_ENV === "production";
+
+export const pinoInstance = pino({
+  level: isProduction ? "info" : "debug",
+  transport: !isProduction
+    ? {
+        target: "pino-pretty",
+        options: {
+          colorize: true,
+          translateTime: "yyyy-mm-dd HH:MM:ss",
+          ignore: "pid,hostname",
+        },
+      }
+    : undefined,
+  formatters: {
+    level: (label) => ({ level: label }),
+  },
+  timestamp: pino.stdTimeFunctions.isoTime,
+});
+
 class Logger {
-    isProduction = env.NODE_ENV === "production";
-    formatMessage(level, message, meta) {
-        const timestamp = new Date().toISOString();
-        if (this.isProduction) {
-            return JSON.stringify({
-                timestamp,
-                level,
-                message,
-                ...(meta ? { meta } : {}),
-            });
-        }
-        const levelColor = {
-            info: "\x1b[36m[INFO]\x1b[0m",
-            warn: "\x1b[33m[WARN]\x1b[0m",
-            error: "\x1b[31m[ERROR]\x1b[0m",
-            debug: "\x1b[35m[DEBUG]\x1b[0m",
-        }[level];
-        const metaStr = meta ? ` ${JSON.stringify(meta)}` : "";
-        return `${timestamp} ${levelColor} ${message}${metaStr}`;
+  info(arg1, arg2) {
+    if (typeof arg1 === "string") {
+      if (arg2 !== undefined) {
+        pinoInstance.info(arg2, arg1);
+      } else {
+        pinoInstance.info(arg1);
+      }
+    } else {
+      pinoInstance.info(arg1, arg2);
     }
-    info(message, meta) {
-        console.log(this.formatMessage("info", message, meta));
+  }
+
+  warn(arg1, arg2) {
+    if (typeof arg1 === "string") {
+      if (arg2 !== undefined) {
+        pinoInstance.warn(arg2, arg1);
+      } else {
+        pinoInstance.warn(arg1);
+      }
+    } else {
+      pinoInstance.warn(arg1, arg2);
     }
-    warn(message, meta) {
-        console.warn(this.formatMessage("warn", message, meta));
+  }
+
+  error(arg1, arg2) {
+    if (typeof arg1 === "string") {
+      if (arg2 !== undefined) {
+        pinoInstance.error(arg2, arg1);
+      } else {
+        pinoInstance.error(arg1);
+      }
+    } else {
+      pinoInstance.error(arg1, arg2);
     }
-    error(message, meta) {
-        console.error(this.formatMessage("error", message, meta));
+  }
+
+  debug(arg1, arg2) {
+    if (typeof arg1 === "string") {
+      if (arg2 !== undefined) {
+        pinoInstance.debug(arg2, arg1);
+      } else {
+        pinoInstance.debug(arg1);
+      }
+    } else {
+      pinoInstance.debug(arg1, arg2);
     }
-    debug(message, meta) {
-        if (!this.isProduction) {
-            console.log(this.formatMessage("debug", message, meta));
-        }
-    }
+  }
 }
+
 export const logger = new Logger();
