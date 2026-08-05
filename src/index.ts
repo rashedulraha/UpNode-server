@@ -13,6 +13,7 @@ import { streamRoutes } from "./modules/stream/stream.routes";
 import { organizationRoutes } from "./modules/organization/organization.routes";
 import { adminRoutes } from "./modules/admin/admin.routes";
 import { userRoutes } from "./modules/users/user.routes";
+import { webhookRoutes } from "./modules/webhooks/webhook.routes";
 import { errorHandler } from "./middlewares/error.middleware";
 import { requestLogger } from "./middlewares/requestLogger.middleware";
 import { ingestionRateLimiter, apiRateLimiter, authRateLimiter } from "./middlewares/rateLimit.middleware";
@@ -59,6 +60,7 @@ app.use("/api/incidents", incidentRoutes);
 app.use("/api/organization", organizationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/webhooks", webhookRoutes);
 app.use("/api", streamRoutes);
 
 // Health check endpoint
