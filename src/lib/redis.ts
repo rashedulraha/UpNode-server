@@ -3,6 +3,10 @@ import dotenv from "dotenv";
 
 dotenv.config();
 const getRedisOptions = (): RedisOptions => {
+  const isTlsRequired =
+    process.env.REDIS_URL?.startsWith("rediss://") ||
+    process.env.NODE_ENV === "production";
+
   const commonOptions: RedisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
@@ -10,6 +14,7 @@ const getRedisOptions = (): RedisOptions => {
       // Exponential backoff capped at 10 seconds to avoid spamming the console
       return Math.min(times * 1000, 10000);
     },
+    ...(isTlsRequired ? { tls: { rejectUnauthorized: false } } : {}),
   };
 
   if (process.env.REDIS_URL) {
