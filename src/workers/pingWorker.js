@@ -5,6 +5,7 @@ import { addIncidentAlertJob } from "../queues/alertQueue";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { analyzeIncidentWithAI } from "../services/ai.service";
+import pLimit from "p-limit";
 import tls from "tls";
 import url from "url";
 export const METRIC_CHANNEL = "METRIC_UPDATES";
@@ -240,6 +241,26 @@ export const pingSingleProject = async (project) => {
     };
 };
 export const processPingJob = async (job) => {
+    if (job.name === "cleanup-old-metrics") {
+        logger.info(`[Ping Worker] Running scheduled 90-day old metrics cleanup job #${job.id}`);
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        try {
+            const deleteResult = await prisma.pingMetric.deleteMany({
+                where: {
+                    createdAt: {
+                        lt: ninetyDaysAgo,
+                    },
+                },
+            });
+            logger.info(`[Cleanup Job] Successfully deleted ${deleteResult.count} old PingMetric records (older than 90 days).`);
+            return { deletedCount: deleteResult.count };
+        }
+        catch (error) {
+            logger.error(`[Cleanup Job Error] Failed to delete old metrics: ${error.message}`);
+            throw error;
+        }
+    }
     logger.info(`[Ping Worker] Processing scheduled 30-second project ping job #${job.id}`);
     // Fetch all projects that have a non-empty URL configured (+ maintenance fields)
     const projects = await prisma.project.findMany({
@@ -263,7 +284,8 @@ export const processPingJob = async (job) => {
         logger.info(`[Ping Worker] No projects with active URLs found in database. Job complete.`);
         return { pingedCount: 0, results: [] };
     }
-    const results = await Promise.all(validProjects.map((project) => pingSingleProject(project)));
+    const limit = pLimit(25);
+    const results = await Promise.all(validProjects.map((project) => limit(() => pingSingleProject(project))));
     const upCount = results.filter((r) => r.isUp).length;
     const downCount = results.filter((r) => !r.isUp).length;
     logger.info(`[Ping Worker Summary] Pinged ${validProjects.length} projects: ${upCount} UP, ${downCount} DOWN.`);

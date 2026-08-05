@@ -27,8 +27,16 @@ export const setupCronPingJob = async () => {
             jobId: "thirty-second-project-ping-job",
         });
         logger.info(`[Ping Queue] Successfully registered 30-second repeatable ping job (every 30s)`);
+        // Add repeatable cleanup job scheduled once a day at midnight (pattern: "0 0 * * *")
+        await pingQueue.add("cleanup-old-metrics", {}, {
+            repeat: {
+                pattern: "0 0 * * *", // Midnight daily
+            },
+            jobId: "daily-metrics-cleanup-job",
+        });
+        logger.info(`[Ping Queue] Successfully registered daily repeatable metrics cleanup job (0 0 * * *)`);
     }
     catch (error) {
-        logger.error(`[Ping Queue Error] Failed to schedule 30-second repeatable ping job: ${error.message}`);
+        logger.error(`[Ping Queue Error] Failed to schedule repeatable jobs: ${error.message}`);
     }
 };

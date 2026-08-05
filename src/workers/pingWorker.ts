@@ -5,6 +5,7 @@ import { addIncidentAlertJob } from "../queues/alertQueue";
 import { prisma } from "../lib/prisma";
 import { logger } from "../lib/logger";
 import { analyzeIncidentWithAI } from "../services/ai.service";
+import pLimit from "p-limit";
 import tls from "tls";
 import url from "url";
 
@@ -286,6 +287,27 @@ export const pingSingleProject = async (project: { id: string; name: string; url
 };
 
 export const processPingJob = async (job: Job) => {
+  if (job.name === "cleanup-old-metrics") {
+    logger.info(`[Ping Worker] Running scheduled 90-day old metrics cleanup job #${job.id}`);
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+    try {
+      const deleteResult = await prisma.pingMetric.deleteMany({
+        where: {
+          createdAt: {
+            lt: ninetyDaysAgo,
+          },
+        },
+      });
+      logger.info(`[Cleanup Job] Successfully deleted ${deleteResult.count} old PingMetric records (older than 90 days).`);
+      return { deletedCount: deleteResult.count };
+    } catch (error: any) {
+      logger.error(`[Cleanup Job Error] Failed to delete old metrics: ${error.message}`);
+      throw error;
+    }
+  }
+
   logger.info(`[Ping Worker] Processing scheduled 30-second project ping job #${job.id}`);
 
   // Fetch all projects that have a non-empty URL configured (+ maintenance fields)
@@ -316,7 +338,10 @@ export const processPingJob = async (job: Job) => {
     return { pingedCount: 0, results: [] };
   }
 
-  const results = await Promise.all(validProjects.map((project) => pingSingleProject(project)));
+  const limit = pLimit(25);
+  const results = await Promise.all(
+    validProjects.map((project) => limit(() => pingSingleProject(project)))
+  );
 
   const upCount = results.filter((r) => r.isUp).length;
   const downCount = results.filter((r) => !r.isUp).length;

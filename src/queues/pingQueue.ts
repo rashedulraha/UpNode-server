@@ -17,9 +17,6 @@ export const pingQueue = new Queue(PING_QUEUE_NAME, {
   },
 });
 
-/**
- * Schedule repeatable job every 30 seconds to ping all project URLs
- */
 export const setupCronPingJob = async () => {
   try {
     // Add repeatable job scheduled every 30 seconds (every: 30000ms)
@@ -34,7 +31,20 @@ export const setupCronPingJob = async () => {
       } as any
     );
     logger.info(`[Ping Queue] Successfully registered 30-second repeatable ping job (every 30s)`);
+
+    // Add repeatable cleanup job scheduled once a day at midnight (pattern: "0 0 * * *")
+    await pingQueue.add(
+      "cleanup-old-metrics",
+      {},
+      {
+        repeat: {
+          pattern: "0 0 * * *", // Midnight daily
+        },
+        jobId: "daily-metrics-cleanup-job",
+      } as any
+    );
+    logger.info(`[Ping Queue] Successfully registered daily repeatable metrics cleanup job (0 0 * * *)`);
   } catch (error: any) {
-    logger.error(`[Ping Queue Error] Failed to schedule 30-second repeatable ping job: ${error.message}`);
+    logger.error(`[Ping Queue Error] Failed to schedule repeatable jobs: ${error.message}`);
   }
 };
