@@ -3,6 +3,7 @@ import { projectController } from "./project.controller";
 import { maintenanceController } from "./maintenance.controller";
 import { requireAuth, requireOrganization, requireRole } from "../../middlewares/auth.middleware";
 import { validateRequest } from "../../middlewares/validate.middleware";
+import { projectMutationRateLimiter } from "../../middlewares/rateLimit.middleware";
 import { createProjectSchema, projectParamsSchema, updateProjectSchema, maintenanceSchema } from "./project.validation";
 
 const router = Router();
@@ -18,6 +19,7 @@ router.use(requireOrganization);
 router.post(
   "/",
   requireRole("ADMIN", "ENGINEER"),
+  projectMutationRateLimiter,
   validateRequest({ body: createProjectSchema }),
   projectController.create.bind(projectController)
 );
@@ -38,6 +40,7 @@ router.get(
 router.patch(
   "/:id",
   requireRole("ADMIN", "ENGINEER"),
+  projectMutationRateLimiter,
   validateRequest({ params: projectParamsSchema, body: updateProjectSchema }),
   projectController.update.bind(projectController)
 );
