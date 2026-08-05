@@ -42,5 +42,7 @@ export const createRedisSubscriber = (): Redis => {
     : new Redis(redisConnectionOptions);
 };
 
-redis.on("connect", () => console.log("Redis connected successfully"));
-redis.on("error", (err) => console.error("Redis connection error:", err));
+import { logger } from "./logger";
+
+redis.on("connect", () => logger.info("[Redis] Connected successfully"));
+redis.on("error", (err) => logger.error({ event: "REDIS_CONNECTION_ERROR", error: err.message }, `[Redis] Connection error: ${err.message}`));

@@ -3,6 +3,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
 import { env } from "../config/env";
 import { Role } from "@prisma/client";
+import { logger } from "./logger";
 export const auth = betterAuth({
     database: prismaAdapter(prisma, {
         provider: "postgresql",
@@ -74,14 +75,14 @@ export const auth = betterAuth({
                         const errorText = await response.text();
                         throw new Error(`Resend responded with status ${response.status}: ${errorText}`);
                     }
-                    console.log(`[Better Auth] Reset password email sent to ${email} via Resend.`);
+                    logger.info({ event: "PASSWORD_RESET_EMAIL_SENT", email }, `[Better Auth] Reset password email sent to ${email} via Resend.`);
                 }
                 catch (err) {
-                    console.error(`[Better Auth Error] Failed to send reset password email: ${err.message}`);
+                    logger.error({ event: "PASSWORD_RESET_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send reset password email: ${err.message}`);
                 }
             }
             else {
-                console.log(`[Better Auth Simulated Email] ✉️ Reset password link for ${email}: ${url}`);
+                logger.info({ event: "PASSWORD_RESET_EMAIL_SIMULATED", email }, `[Better Auth Simulated Email] ✉️ Reset password link for ${email}: ${url}`);
             }
         },
     },

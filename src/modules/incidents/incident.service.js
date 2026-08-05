@@ -4,6 +4,7 @@ import { addIncidentAlertJob } from "../../queues/alertQueue";
 import { NotFoundError, OptimisticLockError } from "../../middlewares/error.middleware";
 import { IncidentStatus, IncidentSeverity } from "@prisma/client";
 import { analyzeIncidentWithAI } from "../../services/ai.service";
+import { logger } from "../../lib/logger";
 export const INCIDENT_CHANNEL = "INCIDENT_UPDATES";
 export class IncidentService {
     async createIncident(input, organizationId) {
@@ -74,7 +75,7 @@ export class IncidentService {
             }));
         }
         catch (err) {
-            console.error("[SSE] Failed to publish incident creation event to Redis:", err);
+            logger.error({ event: "SSE_PUBLISH_INCIDENT_CREATED_ERROR", organizationId, error: err.message }, `[SSE] Failed to publish incident creation event to Redis: ${err.message}`);
         }
         return incident;
     }
@@ -146,7 +147,7 @@ export class IncidentService {
             }));
         }
         catch (err) {
-            console.error("[SSE] Failed to publish incident update event to Redis:", err);
+            logger.error({ event: "SSE_PUBLISH_INCIDENT_UPDATED_ERROR", organizationId, error: err.message }, `[SSE] Failed to publish incident update event to Redis: ${err.message}`);
         }
         return updatedIncident;
     }

@@ -3,6 +3,7 @@ import { redisPublisher } from "../../lib/redis";
 import { addIncidentAlertJob } from "../../queues/alertQueue";
 import { NotFoundError, OptimisticLockError, ForbiddenError } from "../../middlewares/error.middleware";
 import { IncidentStatus, IncidentSeverity } from "@prisma/client";
+import { logger } from "../../lib/logger";
 
 import { analyzeIncidentWithAI } from "../../services/ai.service";
 
@@ -113,8 +114,8 @@ export class IncidentService {
           data: incident,
         })
       );
-    } catch (err) {
-      console.error("[SSE] Failed to publish incident creation event to Redis:", err);
+    } catch (err: any) {
+      logger.error({ event: "SSE_PUBLISH_INCIDENT_CREATED_ERROR", organizationId, error: err.message }, `[SSE] Failed to publish incident creation event to Redis: ${err.message}`);
     }
 
     return incident;
@@ -198,8 +199,8 @@ export class IncidentService {
           data: updatedIncident,
         })
       );
-    } catch (err) {
-      console.error("[SSE] Failed to publish incident update event to Redis:", err);
+    } catch (err: any) {
+      logger.error({ event: "SSE_PUBLISH_INCIDENT_UPDATED_ERROR", organizationId, error: err.message }, `[SSE] Failed to publish incident update event to Redis: ${err.message}`);
     }
 
     return updatedIncident;
