@@ -40,7 +40,7 @@ describe("Auth Middleware", () => {
   describe("requireAuth", () => {
     it("should call next if valid session exists", async () => {
       const mockSession = {
-        user: { id: "user_1", name: "Test" },
+        user: { id: "user_1", name: "Test", emailVerified: true },
         session: { id: "sess_1" },
       };
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
@@ -57,7 +57,7 @@ describe("Auth Middleware", () => {
 
     it("should return 403 if user account is blocked", async () => {
       const mockSession = {
-        user: { id: "user_1", name: "Test" },
+        user: { id: "user_1", name: "Test", emailVerified: true },
         session: { id: "sess_1" },
       };
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession as any);
