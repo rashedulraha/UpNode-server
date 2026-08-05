@@ -76,6 +76,19 @@ export class ProjectController {
       next(error);
     }
   }
+
+  async unsubscribe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const email = String(req.query.email || req.body.email || "");
+      const projectId = String(req.query.projectId || req.query.project || req.body.projectId || "");
+      const token = String(req.query.token || req.body.token || "");
+
+      const result = await projectService.unsubscribeFromStatusUpdates(email, projectId, token);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const projectController = new ProjectController();

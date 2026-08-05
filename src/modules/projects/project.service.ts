@@ -1,5 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { NotFoundError } from "../../middlewares/error.middleware";
+import { logger } from "../../lib/logger";
+import { verifyUnsubscribeToken } from "../../lib/unsubscribe";
 import crypto from "crypto";
 
 export class ProjectService {
@@ -270,6 +272,48 @@ export class ProjectService {
       message: `Subscribed ${subscriber.email} to real-time status updates for ${project.name}.`,
       projectName: project.name,
       email: subscriber.email,
+    };
+  }
+
+  async unsubscribeFromStatusUpdates(email: string, projectId: string, token: string) {
+    if (!verifyUnsubscribeToken(email, projectId, token)) {
+      throw new Error("Invalid or expired unsubscribe token.");
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // 1. Delete from StatusSubscriber table
+    const deletedSubscribers = await prisma.statusSubscriber.deleteMany({
+      where: {
+        projectId,
+        email: normalizedEmail,
+      },
+    });
+
+    // 2. Remove from project.alertEmail if present
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+    });
+
+    if (project && project.alertEmail) {
+      const emailList = project.alertEmail
+        .split(/[,;\s]+/)
+        .filter((e) => e.trim().toLowerCase() !== normalizedEmail);
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { alertEmail: emailList.join(", ") },
+      });
+    }
+
+    logger.info(
+      { event: "EMAIL_UNSUBSCRIBED", email: normalizedEmail, projectId },
+      `[Unsubscribe] ${normalizedEmail} unsubscribed from project ${projectId}`
+    );
+
+    return {
+      success: true,
+      message: `Successfully unsubscribed ${normalizedEmail} from incident alerts.`,
+      count: deletedSubscribers.count,
     };
   }
 }

@@ -6,9 +6,11 @@ import { validateRequest } from "../../middlewares/validate.middleware";
 import { projectMutationRateLimiter } from "../../middlewares/rateLimit.middleware";
 import { createProjectSchema, projectParamsSchema, updateProjectSchema, maintenanceSchema } from "./project.validation";
 const router = Router();
-// Public Unauthenticated Status Page Endpoints
+// Public Unauthenticated Status Page & GDPR Unsubscribe Endpoints
 router.get("/public/:slug/status", (req, res, next) => projectController.getPublicStatus(req, res, next));
 router.post("/public/:slug/subscribe", (req, res, next) => projectController.subscribePublic(req, res, next));
+router.get("/public/unsubscribe", (req, res, next) => projectController.unsubscribe(req, res, next));
+router.post("/public/unsubscribe", (req, res, next) => projectController.unsubscribe(req, res, next));
 // Authenticated Organization Endpoints
 router.use(requireAuth);
 router.use(requireOrganization);
