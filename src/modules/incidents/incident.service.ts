@@ -189,7 +189,21 @@ export class IncidentService {
       return result;
     });
 
-    // 3. Broadcast real-time update via Redis Pub/Sub
+    // 3. Enqueue Alert Job for status changes / resolution (fires custom webhooks, email, slack)
+    if (input.status && input.status !== existing.status) {
+      await addIncidentAlertJob({
+        incidentId: updatedIncident.id,
+        title: updatedIncident.title,
+        description: updatedIncident.description,
+        severity: updatedIncident.severity,
+        status: updatedIncident.status,
+        projectId: updatedIncident.projectId,
+        organizationId,
+        createdAt: updatedIncident.createdAt.toISOString(),
+      });
+    }
+
+    // 4. Broadcast real-time update via Redis Pub/Sub
     try {
       await redisPublisher.publish(
         INCIDENT_CHANNEL,

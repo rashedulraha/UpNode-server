@@ -4,6 +4,7 @@ import { ALERT_QUEUE_NAME, IncidentAlertPayload } from "../queues/alertQueue";
 import { prisma } from "../lib/prisma";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
+import crypto from "crypto";
 
 /**
  * Send real-time Slack Webhook notification for an incident alert
@@ -322,6 +323,108 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
   }
 };
 
+/**
+ * Query Prisma database for active custom webhooks and dispatch HTTP POST payloads for incident events
+ */
+export const sendWebhookNotifications = async (payload: IncidentAlertPayload): Promise<{ count: number; dispatchedUrls: string[] }> => {
+  const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
+  const eventName = status === "RESOLVED" ? "incident.resolved" : "incident.created";
+
+  let webhooks: any[] = [];
+  try {
+    webhooks = await prisma.webhook.findMany({
+      where: {
+        organizationId,
+        enabled: true,
+        OR: [{ projectId }, { projectId: null }],
+      },
+    });
+  } catch (err: any) {
+    logger.warn(`[Custom Webhook Alert] Failed to query webhooks for organization ${organizationId}: ${err.message}`);
+    return { count: 0, dispatchedUrls: [] };
+  }
+
+  // Filter webhooks matching eventName or wildcard "*"
+  const matchingWebhooks = webhooks.filter((w) => {
+    if (!w.events || w.events.length === 0) return true;
+    return w.events.includes(eventName) || w.events.includes("*");
+  });
+
+  if (matchingWebhooks.length === 0) {
+    return { count: 0, dispatchedUrls: [] };
+  }
+
+  const webhookBody = {
+    event: eventName,
+    timestamp: new Date().toISOString(),
+    data: {
+      incidentId,
+      title,
+      description,
+      severity,
+      status,
+      projectId,
+      organizationId,
+      createdAt,
+    },
+  };
+
+  const payloadString = JSON.stringify(webhookBody);
+  const dispatchedUrls: string[] = [];
+
+  await Promise.allSettled(
+    matchingWebhooks.map(async (webhook) => {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "User-Agent": "UpNode-Webhook/1.0",
+        "X-UpNode-Event": eventName,
+      };
+
+      if (webhook.secret) {
+        const hmac = crypto.createHmac("sha256", webhook.secret).update(payloadString).digest("hex");
+        headers["X-UpNode-Signature"] = `sha256=${hmac}`;
+      }
+
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        const response = await fetch(webhook.url, {
+          method: "POST",
+          headers,
+          body: payloadString,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          logger.warn(`[Custom Webhook Alert] Webhook endpoint ${webhook.url} returned status ${response.status}`);
+        } else {
+          logger.info({
+            event: "CUSTOM_WEBHOOK_DISPATCHED",
+            incidentId,
+            webhookId: webhook.id,
+            url: webhook.url,
+            eventName,
+          }, `[Custom Webhook Alert] Successfully dispatched '${eventName}' webhook payload to ${webhook.url}`);
+          dispatchedUrls.push(webhook.url);
+        }
+      } catch (err: any) {
+        logger.error({
+          event: "CUSTOM_WEBHOOK_ERROR",
+          incidentId,
+          webhookId: webhook.id,
+          url: webhook.url,
+          error: err.message,
+        }, `[Custom Webhook Error] Failed to dispatch webhook to ${webhook.url}: ${err.message}`);
+      }
+    })
+  );
+
+  return { count: dispatchedUrls.length, dispatchedUrls };
+};
+
 export const processAlertJob = async (job: Job<IncidentAlertPayload>) => {
   const { incidentId } = job.data;
   logger.info({
@@ -331,13 +434,15 @@ export const processAlertJob = async (job: Job<IncidentAlertPayload>) => {
     incidentId,
   }, `[Alert Worker] Processing Job #${job.id} (Attempt ${job.attemptsMade + 1}): Alert for Incident ${incidentId}`);
 
-  const [slackResult, emailResult] = await Promise.allSettled([
+  const [slackResult, emailResult, webhookResult] = await Promise.allSettled([
     sendSlackNotification(job.data),
     sendEmailNotification(job.data),
+    sendWebhookNotifications(job.data),
   ]);
 
   const slackSuccess = slackResult.status === "fulfilled" && slackResult.value === true;
   const emailData = emailResult.status === "fulfilled" ? emailResult.value : { count: 0, recipients: [] };
+  const webhookData = webhookResult.status === "fulfilled" ? webhookResult.value : { count: 0, dispatchedUrls: [] };
 
   if (slackResult.status === "rejected") {
     logger.error({
@@ -355,10 +460,20 @@ export const processAlertJob = async (job: Job<IncidentAlertPayload>) => {
     }, `[Alert Worker Job #${job.id}] Email dispatch rejected: ${emailResult.reason?.message || emailResult.reason}`);
   }
 
+  if (webhookResult.status === "rejected") {
+    logger.error({
+      event: "WEBHOOK_DISPATCH_REJECTED",
+      jobId: job.id,
+      error: webhookResult.reason?.message || webhookResult.reason,
+    }, `[Alert Worker Job #${job.id}] Custom Webhook dispatch rejected: ${webhookResult.reason?.message || webhookResult.reason}`);
+  }
+
   return {
     sentSlack: slackSuccess,
     sentEmailCount: emailData.count,
     recipients: emailData.recipients,
+    sentWebhookCount: webhookData.count,
+    dispatchedWebhooks: webhookData.dispatchedUrls,
     timestamp: new Date().toISOString(),
   };
 };

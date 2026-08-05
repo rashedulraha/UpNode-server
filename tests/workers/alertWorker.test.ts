@@ -3,6 +3,7 @@ import { prismaMock } from "../setup";
 import {
   sendSlackNotification,
   sendEmailNotification,
+  sendWebhookNotifications,
   processAlertJob,
 } from "../../src/workers/alertWorker";
 import { IncidentAlertPayload } from "../../src/queues/alertQueue";
@@ -21,11 +22,39 @@ describe("alertWorker Notification Logic", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "email_mock_123" }),
+        text: async () => "",
+      })
+    );
   });
 
   it("should send simulated Slack notification when SLACK_WEBHOOK_URL is not provided", async () => {
     const result = await sendSlackNotification(samplePayload);
     expect(result).toBe(true);
+  });
+
+  it("should query custom webhooks and dispatch POST request with signature", async () => {
+    prismaMock.webhook.findMany.mockResolvedValue([
+      {
+        id: "wh-1",
+        url: "https://example.com/webhook",
+        secret: "supersecret123",
+        events: ["incident.created", "incident.resolved"],
+        enabled: true,
+        organizationId: "org-789",
+        projectId: "proj-456",
+      },
+    ] as any);
+
+    const result = await sendWebhookNotifications(samplePayload);
+
+    expect(prismaMock.webhook.findMany).toHaveBeenCalled();
+    expect(result.count).toBe(1);
+    expect(result.dispatchedUrls).toEqual(["https://example.com/webhook"]);
   });
 
   it("should query organization members and format email notifications", async () => {
@@ -73,7 +102,7 @@ describe("alertWorker Notification Logic", () => {
     expect(result.recipients).toEqual(["alice@company.com", "bob@company.com"]);
   });
 
-  it("should process alert job successfully running Slack and Email dispatches", async () => {
+  it("should process alert job successfully running Slack, Email, and Webhook dispatches", async () => {
     prismaMock.member.findMany.mockResolvedValue([
       {
         id: "mem-1",
@@ -87,6 +116,7 @@ describe("alertWorker Notification Logic", () => {
         },
       },
     ] as any);
+    prismaMock.webhook.findMany.mockResolvedValue([]);
 
     const mockJob: any = {
       id: "job-001",
@@ -99,6 +129,7 @@ describe("alertWorker Notification Logic", () => {
     expect(result.sentSlack).toBe(true);
     expect(result.sentEmailCount).toBe(1);
     expect(result.recipients).toEqual(["alice@company.com"]);
+    expect(result.sentWebhookCount).toBe(0);
     expect(result.timestamp).toBeDefined();
   });
 });
