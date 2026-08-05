@@ -1,28 +1,83 @@
 import { Request, Response, NextFunction } from "express";
 import { auth } from "../lib/auth";
 import { prisma } from "../lib/prisma";
+import { redis } from "../lib/redis";
 import { Role } from "@prisma/client";
 import { fromNodeHeaders } from "better-auth/node";
+import { logger } from "../lib/logger";
+
+// Helper functions for safe Redis caching with automatic error fallback
+async function getCache<T>(key: string): Promise<T | null> {
+  try {
+    const data = await redis.get(key);
+    return data ? (JSON.parse(data) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setCache(key: string, data: any, ttlSeconds: number = 300): Promise<void> {
+  try {
+    await redis.set(key, JSON.stringify(data), "EX", ttlSeconds);
+  } catch {
+    // Silently ignore Redis write errors to prevent request failures
+  }
+}
+
+export const invalidateUserSessionCache = async (userId: string, organizationId?: string): Promise<void> => {
+  try {
+    await redis.del(`user:cache:${userId}`);
+    await redis.del(`user:default_org:${userId}`);
+    if (organizationId) {
+      await redis.del(`member:cache:${organizationId}:${userId}`);
+    }
+  } catch {
+    // Ignore cache clear errors
+  }
+};
 
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers)
-    });
+    const authHeader = req.headers.authorization || req.headers.cookie || "";
+    const sessionCacheKey = authHeader ? `auth:session:${authHeader}` : null;
+
+    let session: any = null;
+
+    if (sessionCacheKey) {
+      session = await getCache<any>(sessionCacheKey);
+    }
+
+    if (!session) {
+      session = await auth.api.getSession({
+        headers: fromNodeHeaders(req.headers),
+      });
+
+      if (session && sessionCacheKey) {
+        // Cache session for 60 seconds
+        await setCache(sessionCacheKey, session, 60);
+      }
+    }
 
     if (!session || !session.user) {
       res.status(401).json({ error: "Unauthorized: No valid session found." });
       return;
     }
 
-    let dbUser = null;
-    try {
-      dbUser = await prisma.user.findUnique({
-        where: { id: session.user.id },
-        select: { role: true, isBlocked: true },
-      });
-    } catch {
-      // Fallback for mock/test environments
+    let dbUser = await getCache<{ role: Role; isBlocked: boolean }>(`user:cache:${session.user.id}`);
+
+    if (!dbUser) {
+      try {
+        dbUser = await prisma.user.findUnique({
+          where: { id: session.user.id },
+          select: { role: true, isBlocked: true },
+        });
+
+        if (dbUser) {
+          await setCache(`user:cache:${session.user.id}`, dbUser, 300);
+        }
+      } catch {
+        // Fallback for mock/test environments
+      }
     }
 
     if (dbUser?.isBlocked) {
@@ -37,8 +92,8 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     };
     req.session = session.session;
     next();
-  } catch (error) {
-    console.error("Auth middleware error:", error);
+  } catch (error: any) {
+    logger.error({ event: "AUTH_MIDDLEWARE_ERROR", error: error.message }, `[Auth Middleware] Error: ${error.message}`);
     res.status(500).json({ error: "Internal server error during authentication." });
   }
 };
@@ -61,8 +116,8 @@ export const requireSuperAdmin = async (req: Request, res: Response, next: NextF
     }
 
     next();
-  } catch (error) {
-    console.error("Super Admin middleware error:", error);
+  } catch (error: any) {
+    logger.error({ event: "SUPER_ADMIN_MIDDLEWARE_ERROR", error: error.message }, `[Super Admin Middleware] Error: ${error.message}`);
     res.status(500).json({ error: "Internal server error during super admin verification." });
   }
 };
@@ -83,17 +138,26 @@ export const requireOrganization = async (req: Request, res: Response, next: Nex
 
     // If no organizationId header/query was passed, resolve automatically for the user
     if (!organizationId) {
-      const userMember = await prisma.member.findFirst({
-        where: { userId: req.user.id },
-      });
+      const defaultOrgCacheKey = `user:default_org:${req.user.id}`;
+      organizationId = (await getCache<string>(defaultOrgCacheKey)) || "";
 
-      if (userMember) {
-        organizationId = userMember.organizationId;
-      } else {
-        // Fallback to first existing organization in DB
-        const defaultOrg = await prisma.organization.findFirst();
-        if (defaultOrg) {
-          organizationId = defaultOrg.id;
+      if (!organizationId) {
+        const userMember = await prisma.member.findFirst({
+          where: { userId: req.user.id },
+        });
+
+        if (userMember) {
+          organizationId = userMember.organizationId;
+        } else {
+          // Fallback to first existing organization in DB
+          const defaultOrg = await prisma.organization.findFirst();
+          if (defaultOrg) {
+            organizationId = defaultOrg.id;
+          }
+        }
+
+        if (organizationId) {
+          await setCache(defaultOrgCacheKey, organizationId, 300);
         }
       }
     }
@@ -111,35 +175,44 @@ export const requireOrganization = async (req: Request, res: Response, next: Nex
       return;
     }
 
-    // Verify user membership in organization or auto-grant membership
-    let member = await prisma.member.findUnique({
-      where: {
-        organizationId_userId: {
-          organizationId,
-          userId: req.user.id,
-        },
-      },
-    });
+    // Verify user membership in organization or auto-grant membership with Redis caching
+    const memberCacheKey = `member:cache:${organizationId}:${req.user.id}`;
+    let member = await getCache<{ id: string; role: Role }>(memberCacheKey);
 
     if (!member) {
-      // Auto-assign user into the organization (first to join gets ADMIN, else VIEWER)
-      try {
-        const memberCount = await prisma.member.count({
-          where: { organizationId },
-        });
-        const assignedRole = memberCount === 0 ? Role.ADMIN : Role.VIEWER;
-
-        member = await prisma.member.create({
-          data: {
+      member = await prisma.member.findUnique({
+        where: {
+          organizationId_userId: {
             organizationId,
             userId: req.user.id,
-            role: assignedRole,
           },
-        });
-      } catch {
-        member = await prisma.member.findFirst({
-          where: { userId: req.user.id },
-        });
+        },
+      });
+
+      if (!member) {
+        // Auto-assign user into the organization (first to join gets ADMIN, else VIEWER)
+        try {
+          const memberCount = await prisma.member.count({
+            where: { organizationId },
+          });
+          const assignedRole = memberCount === 0 ? Role.ADMIN : Role.VIEWER;
+
+          member = await prisma.member.create({
+            data: {
+              organizationId,
+              userId: req.user.id,
+              role: assignedRole,
+            },
+          });
+        } catch {
+          member = await prisma.member.findFirst({
+            where: { userId: req.user.id },
+          });
+        }
+      }
+
+      if (member) {
+        await setCache(memberCacheKey, member, 300);
       }
     }
 
@@ -151,8 +224,8 @@ export const requireOrganization = async (req: Request, res: Response, next: Nex
     req.organizationId = organizationId;
     req.role = member.role;
     next();
-  } catch (error) {
-    console.error("Organization middleware error:", error);
+  } catch (error: any) {
+    logger.error({ event: "ORGANIZATION_MIDDLEWARE_ERROR", error: error.message }, `[Organization Middleware] Error: ${error.message}`);
     res.status(500).json({ error: "Internal server error during organization verification." });
   }
 };
