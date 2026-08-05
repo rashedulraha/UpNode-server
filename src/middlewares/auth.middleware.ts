@@ -85,6 +85,14 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
+    if (session.user && !session.user.emailVerified) {
+      res.status(403).json({
+        error: "EMAIL_NOT_VERIFIED",
+        message: "Forbidden: Please verify your email address to access the dashboard portal.",
+      });
+      return;
+    }
+
     req.user = {
       ...session.user,
       role: dbUser?.role || (session.user as any).role || Role.VIEWER,
