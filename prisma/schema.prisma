@@ -107,6 +107,7 @@ model Project {
   organization    Organization @relation(fields: [organizationId], references: [id])
   incidents       Incident[]
   pingMetrics     PingMetric[]
+  statusSubscribers StatusSubscriber[]
 
   @@index([organizationId])
 }
@@ -183,3 +184,15 @@ model UserNotificationPreference {
   slackEnabled Boolean @default(true)
   user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+model StatusSubscriber {
+  id        String   @id @default(uuid())
+  email     String
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, email])
+  @@index([projectId])
+}
+

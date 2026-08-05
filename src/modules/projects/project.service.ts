@@ -250,12 +250,26 @@ export class ProjectService {
       throw new Error("Project not found");
     }
 
-    // Return success response confirming email subscription
+    // Save subscription email in database
+    const subscriber = await prisma.statusSubscriber.upsert({
+      where: {
+        projectId_email: {
+          projectId: project.id,
+          email: email.toLowerCase().trim(),
+        },
+      },
+      update: {},
+      create: {
+        projectId: project.id,
+        email: email.toLowerCase().trim(),
+      },
+    });
+
     return {
       success: true,
-      message: `Subscribed ${email} to real-time status updates for ${project.name}.`,
+      message: `Subscribed ${subscriber.email} to real-time status updates for ${project.name}.`,
       projectName: project.name,
-      email,
+      email: subscriber.email,
     };
   }
 }
