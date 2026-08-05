@@ -14,7 +14,7 @@ import { adminRoutes } from "./modules/admin/admin.routes";
 import { userRoutes } from "./modules/users/user.routes";
 import { errorHandler } from "./middlewares/error.middleware";
 import { requestLogger } from "./middlewares/requestLogger.middleware";
-import { ingestionRateLimiter } from "./middlewares/rateLimit.middleware";
+import { ingestionRateLimiter, apiRateLimiter, authRateLimiter } from "./middlewares/rateLimit.middleware";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startPingWorker } from "./workers/pingWorker";
 import { setupCronPingJob } from "./queues/pingQueue";
@@ -36,8 +36,10 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 // 3. Centralized Request Logger
 app.use(requestLogger);
-// 4. Rate Limiting for Telemetry & Ingestion Stream Endpoints
+// 4. Redis-Backed Rate Limiting
+app.use("/api", apiRateLimiter);
 app.use("/api/stream", ingestionRateLimiter);
+app.use("/api/auth", authRateLimiter);
 // 5. Better Auth API Handler
 app.all("/api/auth/*path", toNodeHandler(auth.handler));
 // 6. Mount Feature Modules
