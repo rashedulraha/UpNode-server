@@ -13,13 +13,23 @@ export const alertQueue = new Queue(ALERT_QUEUE_NAME, {
         removeOnFail: false,
     },
 });
+import { logger } from "../lib/logger";
+
 export const addIncidentAlertJob = async (payload) => {
     try {
         const job = await alertQueue.add("send-alert", payload);
-        console.log(`[Queue] Added alert job #${job.id} for incident: ${payload.incidentId}`);
+        logger.info({
+            event: "ALERT_JOB_ENQUEUED",
+            jobId: job.id,
+            incidentId: payload.incidentId,
+        }, `[Queue] Added alert job #${job.id} for incident: ${payload.incidentId}`);
         return job;
     }
     catch (error) {
-        console.error("[Queue] Failed to add alert job:", error);
+        logger.error({
+            event: "ALERT_JOB_ENQUEUE_ERROR",
+            incidentId: payload.incidentId,
+            error: error.message,
+        }, `[Queue] Failed to add alert job: ${error.message}`);
     }
 };

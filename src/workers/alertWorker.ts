@@ -112,17 +112,32 @@ export const sendSlackNotification = async (payload: IncidentAlertPayload): Prom
         throw new Error(`Slack Webhook API responded with status ${response.status}: ${errorText}`);
       }
 
-      logger.info(`[Slack Alert] Successfully dispatched Slack notification for incident ${incidentId} to Webhook URL`);
+      logger.info({
+        event: "SLACK_ALERT_DISPATCHED",
+        incidentId,
+        severity,
+        projectName,
+      }, `[Slack Alert] Successfully dispatched Slack notification for incident ${incidentId}`);
       return true;
     } catch (err: any) {
-      logger.error(`[Slack Alert Error] Failed to send Slack notification for incident ${incidentId}: ${err.message}`);
+      logger.error({
+        event: "SLACK_ALERT_ERROR",
+        incidentId,
+        error: err.message,
+      }, `[Slack Alert Error] Failed to send Slack notification for incident ${incidentId}: ${err.message}`);
       throw err;
     }
   } else {
     // Simulated fallback log when no Slack Webhook URL is configured
-    console.log(
-      `[Slack Notification Simulated] 🚨 [${severity}] ${title} | Status: ${status} | Org: ${organizationName} | Project: ${projectName}`
-    );
+    logger.info({
+      event: "SLACK_ALERT_SIMULATED",
+      incidentId,
+      severity,
+      title,
+      status,
+      organizationName,
+      projectName,
+    }, `[Slack Notification Simulated] 🚨 [${severity}] ${title} | Status: ${status} | Org: ${organizationName} | Project: ${projectName}`);
     return true;
   }
 };
@@ -248,24 +263,40 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
         throw new Error(`Resend Email API responded with status ${response.status}: ${errorText}`);
       }
 
-      logger.info(`[Email Alert] Sent alert email via Resend to ${recipientEmails.length} recipients for incident ${incidentId}`);
+      logger.info({
+        event: "EMAIL_ALERT_DISPATCHED",
+        incidentId,
+        recipientCount: recipientEmails.length,
+      }, `[Email Alert] Sent alert email via Resend to ${recipientEmails.length} recipients for incident ${incidentId}`);
       return { count: recipientEmails.length, recipients: recipientEmails };
     } catch (err: any) {
-      logger.error(`[Email Alert Error] Failed to send email via Resend: ${err.message}`);
+      logger.error({
+        event: "EMAIL_ALERT_ERROR",
+        incidentId,
+        error: err.message,
+      }, `[Email Alert Error] Failed to send email via Resend: ${err.message}`);
       throw err;
     }
   } else {
     // Simulated fallback log when RESEND_API_KEY is not set
-    console.log(
-      `[Email Notification Simulated] ✉️ Sent incident alert email to ${recipientEmails.length} recipients: ${recipientEmails.join(", ")}`
-    );
+    logger.info({
+      event: "EMAIL_ALERT_SIMULATED",
+      incidentId,
+      recipientCount: recipientEmails.length,
+      recipients: recipientEmails,
+    }, `[Email Notification Simulated] ✉️ Sent incident alert email to ${recipientEmails.length} recipients: ${recipientEmails.join(", ")}`);
     return { count: recipientEmails.length, recipients: recipientEmails };
   }
 };
 
 export const processAlertJob = async (job: Job<IncidentAlertPayload>) => {
   const { incidentId } = job.data;
-  console.log(`[Worker] Processing Job #${job.id} (Attempt ${job.attemptsMade + 1}): Alert for Incident ${incidentId}`);
+  logger.info({
+    event: "ALERT_JOB_PROCESSING",
+    jobId: job.id,
+    attempt: job.attemptsMade + 1,
+    incidentId,
+  }, `[Alert Worker] Processing Job #${job.id} (Attempt ${job.attemptsMade + 1}): Alert for Incident ${incidentId}`);
 
   const [slackResult, emailResult] = await Promise.allSettled([
     sendSlackNotification(job.data),
@@ -276,11 +307,19 @@ export const processAlertJob = async (job: Job<IncidentAlertPayload>) => {
   const emailData = emailResult.status === "fulfilled" ? emailResult.value : { count: 0, recipients: [] };
 
   if (slackResult.status === "rejected") {
-    console.error(`[Worker Job #${job.id}] Slack dispatch rejected:`, slackResult.reason?.message || slackResult.reason);
+    logger.error({
+      event: "SLACK_DISPATCH_REJECTED",
+      jobId: job.id,
+      error: slackResult.reason?.message || slackResult.reason,
+    }, `[Alert Worker Job #${job.id}] Slack dispatch rejected: ${slackResult.reason?.message || slackResult.reason}`);
   }
 
   if (emailResult.status === "rejected") {
-    console.error(`[Worker Job #${job.id}] Email dispatch rejected:`, emailResult.reason?.message || emailResult.reason);
+    logger.error({
+      event: "EMAIL_DISPATCH_REJECTED",
+      jobId: job.id,
+      error: emailResult.reason?.message || emailResult.reason,
+    }, `[Alert Worker Job #${job.id}] Email dispatch rejected: ${emailResult.reason?.message || emailResult.reason}`);
   }
 
   return {
@@ -298,23 +337,31 @@ export const startAlertWorker = () => {
   });
 
   worker.on("completed", (job: Job<IncidentAlertPayload>, result) => {
-    console.log(`[Worker] Job #${job.id} completed successfully:`, result);
+    logger.info({
+      event: "ALERT_JOB_COMPLETED",
+      jobId: job.id,
+      result,
+    }, `[Alert Worker] Job #${job.id} completed successfully`);
   });
 
   worker.on("failed", (job: Job<IncidentAlertPayload> | undefined, err: Error) => {
     if (job) {
-      console.error(
-        `[Worker] Job #${job.id} failed (Attempt ${job.attemptsMade}/${job.opts.attempts}). Error: ${err.message}`
-      );
+      logger.error({
+        event: "ALERT_JOB_FAILED",
+        jobId: job.id,
+        attempt: job.attemptsMade,
+        maxAttempts: job.opts.attempts,
+        error: err.message,
+      }, `[Alert Worker] Job #${job.id} failed (Attempt ${job.attemptsMade}/${job.opts.attempts}). Error: ${err.message}`);
     } else {
-      console.error(`[Worker] Unknown job failed: ${err.message}`);
+      logger.error({ event: "ALERT_JOB_FAILED", error: err.message }, `[Alert Worker] Unknown job failed: ${err.message}`);
     }
   });
 
   worker.on("error", (err: Error) => {
-    console.error("[Worker] Unexpected worker error:", err.message);
+    logger.error({ event: "ALERT_WORKER_ERROR", error: err.message }, `[Alert Worker] Unexpected worker error: ${err.message}`);
   });
 
-  console.log(`[Worker] Alert worker started listening on queue: ${ALERT_QUEUE_NAME}`);
+  logger.info(`[Alert Worker] Alert worker started listening on queue: ${ALERT_QUEUE_NAME}`);
   return worker;
 };
