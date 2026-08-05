@@ -72,10 +72,11 @@ export const incidentMutationRateLimiter = createRateLimiter({
   message: "Too many incident creation or update requests. Please try again later.",
 });
 
-// Auth Route Rate Limiter (20 req / 15 mins)
+// Auth Route Rate Limiter (Allows frequent get-session polling while protecting sign-in/sign-up)
 export const authRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: env.NODE_ENV === "development" ? 1000 : 200,
   prefix: "upnode:ratelimit:auth:",
   message: "Too many authentication attempts. Please try again later.",
 });
+
