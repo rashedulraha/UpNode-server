@@ -2,7 +2,7 @@ import { Server } from "http";
 import { Worker } from "bullmq";
 import { prisma } from "./prisma";
 import { redis, redisPublisher } from "./redis";
-import { activeSSEConnections } from "../modules/stream/stream.routes";
+import { activeSSEConnections, closeSharedSubscriber } from "../modules/stream/stream.routes";
 import { logger } from "./logger";
 
 export const setupGracefulShutdown = (server: Server, workers?: Worker | Worker[]): void => {
@@ -57,7 +57,7 @@ export const setupGracefulShutdown = (server: Server, workers?: Worker | Worker[
 
       // 4. Close Redis client connections
       logger.info("Closing Redis client connections...");
-      await Promise.allSettled([redis.quit(), redisPublisher.quit()]);
+      await Promise.allSettled([redis.quit(), redisPublisher.quit(), closeSharedSubscriber()]);
       logger.info("Redis connections closed.");
 
       // 5. Disconnect Prisma Database Client

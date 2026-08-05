@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { EventEmitter } from "events";
 import { requireAuth, requireOrganization, requireSuperAdmin } from "../../middlewares/auth.middleware";
 import { createRedisSubscriber } from "../../lib/redis";
 import { INCIDENT_CHANNEL } from "../incidents/incident.service";
@@ -9,6 +10,59 @@ const router = Router();
 
 // Set to track active SSE client responses for graceful shutdown draining
 export const activeSSEConnections = new Set<Response>();
+
+// In-Memory Event Bus for Pub-Sub Multiplexing
+const streamBus = new EventEmitter();
+streamBus.setMaxListeners(0);
+
+// Single Shared Redis Subscriber for all client connections
+let sharedSubscriber: ReturnType<typeof createRedisSubscriber> | null = null;
+let subscribePromise: Promise<void> | null = null;
+
+function getSharedSubscriber(): Promise<void> {
+  if (!sharedSubscriber) {
+    sharedSubscriber = createRedisSubscriber();
+
+    sharedSubscriber.on("message", (channel: string, message: string) => {
+      streamBus.emit("message", channel, message);
+    });
+
+    sharedSubscriber.on("error", (err) => {
+      logger.error("[Redis PubSub Multiplexer] Subscriber error:", err);
+    });
+  }
+
+  if (!subscribePromise) {
+    subscribePromise = Promise.all([
+      sharedSubscriber.subscribe(INCIDENT_CHANNEL),
+      sharedSubscriber.subscribe(METRIC_CHANNEL),
+    ])
+      .then(() => {
+        logger.info("[Redis PubSub Multiplexer] Shared subscriber subscribed to telemetry channels.");
+      })
+      .catch((err) => {
+        subscribePromise = null;
+        logger.error("[Redis PubSub Multiplexer] Subscription setup failed:", err);
+        throw err;
+      });
+  }
+
+  return subscribePromise;
+}
+
+export const closeSharedSubscriber = async (): Promise<void> => {
+  if (sharedSubscriber) {
+    try {
+      await sharedSubscriber.quit();
+      logger.info("[Redis PubSub Multiplexer] Shared subscriber connection closed.");
+    } catch (err) {
+      logger.error("[Redis PubSub Multiplexer] Error closing shared subscriber:", err);
+    } finally {
+      sharedSubscriber = null;
+      subscribePromise = null;
+    }
+  }
+};
 
 // Global Super Admin System Health Terminal Stream
 router.get("/stream/admin", requireAuth, requireSuperAdmin, async (req: Request, res: Response): Promise<void> => {
@@ -27,7 +81,15 @@ router.get("/stream/admin", requireAuth, requireSuperAdmin, async (req: Request,
 
   res.write(`event: connected\ndata: ${JSON.stringify({ type: "SYSTEM_CONNECTED", message: "Live Redis Telemetry Log Stream connected", timestamp: new Date().toISOString() })}\n\n`);
 
-  const subscriber = createRedisSubscriber();
+  try {
+    await getSharedSubscriber();
+  } catch (err: any) {
+    logger.error("[Admin SSE] Redis subscription setup failed:", err);
+    activeSSEConnections.delete(res);
+    res.end();
+    return;
+  }
+
   let isClosed = false;
 
   const handleMessage = (channel: string, message: string) => {
@@ -40,19 +102,7 @@ router.get("/stream/admin", requireAuth, requireSuperAdmin, async (req: Request,
     }
   };
 
-  subscriber.on("message", handleMessage);
-
-  try {
-    await Promise.all([
-      subscriber.subscribe(INCIDENT_CHANNEL),
-      subscriber.subscribe(METRIC_CHANNEL),
-    ]);
-  } catch (err: any) {
-    logger.error("[Admin SSE] Redis subscription failed:", err);
-    activeSSEConnections.delete(res);
-    res.end();
-    return;
-  }
+  streamBus.on("message", handleMessage);
 
   const heartbeatTimer = setInterval(() => {
     if (!isClosed) {
@@ -66,14 +116,7 @@ router.get("/stream/admin", requireAuth, requireSuperAdmin, async (req: Request,
 
     activeSSEConnections.delete(res);
     clearInterval(heartbeatTimer);
-    subscriber.removeListener("message", handleMessage);
-
-    Promise.all([
-      subscriber.unsubscribe(INCIDENT_CHANNEL),
-      subscriber.unsubscribe(METRIC_CHANNEL)
-    ])
-      .then(() => subscriber.quit())
-      .catch((err) => logger.error("[Admin SSE] Error disconnecting:", err));
+    streamBus.removeListener("message", handleMessage);
   };
 
   req.on("close", cleanup);
@@ -104,8 +147,15 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
   // 2. Send initial connection message
   res.write(`event: connected\ndata: ${JSON.stringify({ message: "SSE stream connected", organizationId })}\n\n`);
 
-  // 3. Create dedicated Redis Subscriber for this SSE client connection
-  const subscriber = createRedisSubscriber();
+  try {
+    await getSharedSubscriber();
+    logger.info(`[SSE] Client connected for org: ${organizationId}`);
+  } catch (err: any) {
+    logger.error("[SSE] Redis subscription setup failed:", err);
+    activeSSEConnections.delete(res);
+    res.end();
+    return;
+  }
 
   let isClosed = false;
 
@@ -134,20 +184,7 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
     }
   };
 
-  subscriber.on("message", handleMessage);
-
-  try {
-    await Promise.all([
-      subscriber.subscribe(INCIDENT_CHANNEL),
-      subscriber.subscribe(METRIC_CHANNEL),
-    ]);
-    logger.info(`[SSE] Client connected for org: ${organizationId}`);
-  } catch (err: any) {
-    logger.error("[SSE] Redis subscription failed:", err);
-    activeSSEConnections.delete(res);
-    res.end();
-    return;
-  }
+  streamBus.on("message", handleMessage);
 
   // 4. Periodic heartbeat ping (every 15 seconds)
   const heartbeatTimer = setInterval(() => {
@@ -163,14 +200,7 @@ router.get("/stream", requireAuth, requireOrganization, async (req: Request, res
 
     activeSSEConnections.delete(res);
     clearInterval(heartbeatTimer);
-    subscriber.removeListener("message", handleMessage);
-
-    Promise.all([
-      subscriber.unsubscribe(INCIDENT_CHANNEL),
-      subscriber.unsubscribe(METRIC_CHANNEL)
-    ])
-      .then(() => subscriber.quit())
-      .catch((err) => logger.error("[SSE] Error disconnecting subscriber:", err));
+    streamBus.removeListener("message", handleMessage);
 
     logger.info(`[SSE] Client disconnected for org: ${organizationId}`);
   };
