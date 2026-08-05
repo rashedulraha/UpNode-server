@@ -24,10 +24,14 @@ export const auth = betterAuth({
       enabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
     },
   },
-  accountLinking: {
-    enabled: true,
-    trustedProviders: ["google", "github"],
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google", "github"],
+      requireLocalEmailVerified: false,
+    },
   },
+
 
   user: {
     additionalFields: {
