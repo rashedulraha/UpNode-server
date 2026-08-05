@@ -142,6 +142,8 @@ export const sendSlackNotification = async (payload: IncidentAlertPayload): Prom
   }
 };
 
+import { generateUnsubscribeToken } from "../lib/unsubscribe";
+
 /**
  * Fetch organization team members & alert settings from Prisma database and send transactional email alerts
  */
@@ -172,7 +174,23 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
     // Ignore error, fallback to members query
   }
 
-  // 2. Query organization members and their user email profiles using Prisma
+  // 2. Query StatusSubscribers from database for this project
+  try {
+    const statusSubscribers = await prisma.statusSubscriber.findMany({
+      where: { projectId },
+      select: { email: true },
+    });
+
+    statusSubscribers.forEach((s) => {
+      if (s.email && s.email.includes("@")) {
+        recipientEmailsSet.add(s.email.trim().toLowerCase());
+      }
+    });
+  } catch (err: any) {
+    logger.warn(`[Email Alert] Failed to query status subscribers for project ${projectId}: ${err.message}`);
+  }
+
+  // 3. Query organization members and their user email profiles using Prisma
   try {
     const members = await prisma.member.findMany({
       where: { organizationId },
@@ -203,44 +221,55 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
     return { count: 0, recipients: [] };
   }
 
-  const htmlContent = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-      <div style="background-color: #fff5f5; border-left: 4px solid #e53e3e; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
-        <h2 style="color: #c53030; margin: 0 0 6px 0; font-size: 18px;">🚨 UpNode Incident Alert</h2>
-        <h3 style="color: #2d3748; margin: 0; font-size: 16px;">${title}</h3>
-      </div>
-      
-      <p style="color: #4a5568; font-size: 14px; line-height: 1.5;">A new operational incident has been triggered on your monitored infrastructure.</p>
-      
-      <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568; width: 30%;">Severity:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #c53030; font-weight: 700;">${severity}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Status:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #2b6cb0; font-weight: 600;">${status}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Incident ID:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #4a5568; font-family: monospace;">${incidentId}</td>
-        </tr>
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Reported Time:</td>
-          <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #4a5568;">${createdAt}</td>
-        </tr>
-      </table>
+  const clientBaseUrl = env.CLIENT_URL || "http://localhost:3000";
 
-      <div style="background-color: #f7fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #edf2f7;">
-        <h4 style="margin: 0 0 8px 0; color: #2d3748; font-size: 14px;">Details:</h4>
-        <p style="color: #4a5568; margin: 0; font-size: 14px; line-height: 1.5;">${description || "No detailed description provided."}</p>
-      </div>
+  const getHtmlContentForEmail = (recipientEmail: string) => {
+    const token = generateUnsubscribeToken(recipientEmail, projectId);
+    const unsubscribeUrl = `${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmail)}&project=${projectId}&token=${token}`;
 
-      <p style="font-size: 12px; color: #a0aec0; text-align: center; margin-top: 28px; border-t: 1px solid #edf2f7; padding-top: 16px;">
-        UpNode Real-Time Telemetry &amp; Incident Management Engine
-      </p>
-    </div>
-  `;
+    return `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="background-color: #fff5f5; border-left: 4px solid #e53e3e; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+          <h2 style="color: #c53030; margin: 0 0 6px 0; font-size: 18px;">🚨 UpNode Incident Alert</h2>
+          <h3 style="color: #2d3748; margin: 0; font-size: 16px;">${title}</h3>
+        </div>
+        
+        <p style="color: #4a5568; font-size: 14px; line-height: 1.5;">A new operational incident has been triggered on your monitored infrastructure.</p>
+        
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568; width: 30%;">Severity:</td>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #c53030; font-weight: 700;">${severity}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Status:</td>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #2b6cb0; font-weight: 600;">${status}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Incident ID:</td>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #4a5568; font-family: monospace;">${incidentId}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; font-weight: 600; color: #4a5568;">Reported Time:</td>
+            <td style="padding: 10px; border-bottom: 1px solid #edf2f7; color: #4a5568;">${createdAt}</td>
+          </tr>
+        </table>
+
+        <div style="background-color: #f7fafc; padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #edf2f7;">
+          <h4 style="margin: 0 0 8px 0; color: #2d3748; font-size: 14px;">Details:</h4>
+          <p style="color: #4a5568; margin: 0; font-size: 14px; line-height: 1.5;">${description || "No detailed description provided."}</p>
+        </div>
+
+        <div style="font-size: 11px; color: #a0aec0; text-align: center; margin-top: 28px; border-top: 1px solid #edf2f7; padding-top: 16px;">
+          <p style="margin: 0 0 6px 0;">UpNode Real-Time Telemetry &amp; Incident Management Engine</p>
+          <p style="margin: 0;">
+            Don't want to receive incident alerts for this project?
+            <a href="${unsubscribeUrl}" style="color: #4a5568; text-decoration: underline;">Unsubscribe here (GDPR)</a>
+          </p>
+        </div>
+      </div>
+    `;
+  };
 
   if (env.RESEND_API_KEY) {
     try {
@@ -254,7 +283,11 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
           from: env.EMAIL_FROM || "alerts@upnode.io",
           to: recipientEmails,
           subject: `[${severity}] UpNode Incident Alert: ${title}`,
-          html: htmlContent,
+          html: getHtmlContentForEmail(recipientEmails[0]),
+          headers: {
+            "List-Unsubscribe": `<${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmails[0])}&project=${projectId}&token=${generateUnsubscribeToken(recipientEmails[0], projectId)}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
         }),
       });
 

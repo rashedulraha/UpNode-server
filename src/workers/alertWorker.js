@@ -126,6 +126,8 @@ export const sendSlackNotification = async (payload) => {
   }
 };
 
+import { generateUnsubscribeToken } from "../lib/unsubscribe";
+
 export const sendEmailNotification = async (payload) => {
   const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
   const recipientEmailsSet = new Set();
@@ -146,6 +148,19 @@ export const sendEmailNotification = async (payload) => {
     }
   } catch {
     // Ignore error, fallback to members query
+  }
+  try {
+    const statusSubscribers = await prisma.statusSubscriber.findMany({
+      where: { projectId },
+      select: { email: true },
+    });
+    statusSubscribers.forEach((s) => {
+      if (s.email && s.email.includes("@")) {
+        recipientEmailsSet.add(s.email.trim().toLowerCase());
+      }
+    });
+  } catch (err) {
+    logger.warn(`[Email Alert] Failed to query status subscribers for project ${projectId}: ${err.message}`);
   }
   try {
     const members = await prisma.member.findMany({
@@ -173,7 +188,11 @@ export const sendEmailNotification = async (payload) => {
     logger.warn(`[Email Alert] No alert email recipients found for organization ${organizationId}. Skipping email dispatch.`);
     return { count: 0, recipients: [] };
   }
-  const htmlContent = `
+  const clientBaseUrl = env.CLIENT_URL || "http://localhost:3000";
+  const getHtmlContentForEmail = (recipientEmail) => {
+    const token = generateUnsubscribeToken(recipientEmail, projectId);
+    const unsubscribeUrl = `${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmail)}&project=${projectId}&token=${token}`;
+    return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
       <div style="background-color: #fff5f5; border-left: 4px solid #e53e3e; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
         <h2 style="color: #c53030; margin: 0 0 6px 0; font-size: 18px;">🚨 UpNode Incident Alert</h2>
@@ -206,11 +225,17 @@ export const sendEmailNotification = async (payload) => {
         <p style="color: #4a5568; margin: 0; font-size: 14px; line-height: 1.5;">${description || "No detailed description provided."}</p>
       </div>
 
-      <p style="font-size: 12px; color: #a0aec0; text-align: center; margin-top: 28px; border-t: 1px solid #edf2f7; padding-top: 16px;">
-        UpNode Real-Time Telemetry &amp; Incident Management Engine
-      </p>
+      <div style="font-size: 11px; color: #a0aec0; text-align: center; margin-top: 28px; border-top: 1px solid #edf2f7; padding-top: 16px;">
+        <p style="margin: 0 0 6px 0;">UpNode Real-Time Telemetry &amp; Incident Management Engine</p>
+        <p style="margin: 0;">
+          Don't want to receive incident alerts for this project?
+          <a href="${unsubscribeUrl}" style="color: #4a5568; text-decoration: underline;">Unsubscribe here (GDPR)</a>
+        </p>
+      </div>
     </div>
   `;
+  };
+
   if (env.RESEND_API_KEY) {
     try {
       const response = await fetch("https://api.resend.com/emails", {
@@ -223,7 +248,11 @@ export const sendEmailNotification = async (payload) => {
           from: env.EMAIL_FROM || "alerts@upnode.io",
           to: recipientEmails,
           subject: `[${severity}] UpNode Incident Alert: ${title}`,
-          html: htmlContent,
+          html: getHtmlContentForEmail(recipientEmails[0]),
+          headers: {
+            "List-Unsubscribe": `<${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmails[0])}&project=${projectId}&token=${generateUnsubscribeToken(recipientEmails[0], projectId)}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
         }),
       });
       if (!response.ok) {
