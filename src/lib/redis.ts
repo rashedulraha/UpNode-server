@@ -3,9 +3,8 @@ import dotenv from "dotenv";
 
 dotenv.config();
 const getRedisOptions = (): RedisOptions => {
-  const isTlsRequired =
-    process.env.REDIS_URL?.startsWith("rediss://") ||
-    process.env.NODE_ENV === "production";
+  const isTlsRequired = Boolean(process.env.REDIS_URL?.startsWith("rediss://"));
+
 
   const commonOptions: RedisOptions = {
     maxRetriesPerRequest: null,
