@@ -2,16 +2,16 @@ import { z } from "zod";
 import { UserRole, UserRole as Role } from "@prisma/client";
 
 export const inviteMemberSchema = z.object({
-  email: z.string().email("Valid email address is required"),
-  role: z.nativeEnum(UserRole, {
-    message: "Role must be ADMIN, ENGINEER, or VIEWER",
-  }),
+	email: z.string().email("Valid email address is required"),
+	role: z.nativeEnum(UserRole, {
+		message: "Role must be ADMIN, ENGINEER, or VIEWER",
+	}),
 });
 
 export const updateMemberRoleSchema = z.object({
-  role: z.nativeEnum(UserRole, {
-    message: "Role must be ADMIN, ENGINEER, or VIEWER",
-  }),
+	role: z.nativeEnum(UserRole, {
+		message: "Role must be ADMIN, ENGINEER, or VIEWER",
+	}),
 });
 
 export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
