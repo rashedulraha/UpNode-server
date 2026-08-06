@@ -9,138 +9,166 @@ import crypto from "crypto";
 /**
  * Send real-time Slack Webhook notification for an incident alert
  */
-export const sendSlackNotification = async (payload: IncidentAlertPayload): Promise<boolean> => {
-  const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
+export const sendSlackNotification = async (
+	payload: IncidentAlertPayload,
+): Promise<boolean> => {
+	const {
+		incidentId,
+		title,
+		description,
+		severity,
+		status,
+		projectId,
+		organizationId,
+		createdAt,
+	} = payload;
 
-  // 1. Fetch project & organization integration settings from database
-  let targetSlackWebhookUrl: string | null = null;
-  let projectName = projectId;
-  let organizationName = organizationId;
+	// 1. Fetch project & organization integration settings from database
+	let targetSlackWebhookUrl: string | null = null;
+	let projectName = projectId;
+	let organizationName = organizationId;
 
-  try {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: { organization: true },
-    });
+	try {
+		const project = await prisma.project.findUnique({
+			where: { id: projectId },
+			include: { organization: true },
+		});
 
-    if (project) {
-      projectName = project.name;
-      organizationName = project.organization.name;
-      targetSlackWebhookUrl = project.slackWebhookUrl || project.organization.slackWebhookUrl || env.SLACK_WEBHOOK_URL || null;
-    }
-  } catch (err: any) {
-    logger.warn(`[Slack Alert] Failed to fetch project database settings for ${projectId}: ${err.message}`);
-  }
+		if (project) {
+			projectName = project.name;
+			organizationName = project.organization.name;
+			targetSlackWebhookUrl =
+				project.slackWebhookUrl ||
+				project.organization.slackWebhookUrl ||
+				env.SLACK_WEBHOOK_URL ||
+				null;
+		}
+	} catch (err: any) {
+		logger.warn(
+			`[Slack Alert] Failed to fetch project database settings for ${projectId}: ${err.message}`,
+		);
+	}
 
-  if (!targetSlackWebhookUrl) {
-    targetSlackWebhookUrl = env.SLACK_WEBHOOK_URL || null;
-  }
+	if (!targetSlackWebhookUrl) {
+		targetSlackWebhookUrl = env.SLACK_WEBHOOK_URL || null;
+	}
 
-  const severityEmoji: Record<string, string> = {
-    CRITICAL: "🔴 CRITICAL",
-    HIGH: "🟠 HIGH",
-    MEDIUM: "🟡 MEDIUM",
-    LOW: "🔵 LOW",
-  };
+	const severityEmoji: Record<string, string> = {
+		CRITICAL: "🔴 CRITICAL",
+		HIGH: "🟠 HIGH",
+		MEDIUM: "🟡 MEDIUM",
+		LOW: "🔵 LOW",
+	};
 
-  const severityFormatted = severityEmoji[severity] || severity;
+	const severityFormatted = severityEmoji[severity] || severity;
 
-  // Rich block-formatted Slack payload for #incidents channel
-  const slackPayload = {
-    text: `🚨 [${severity}] UpNode Incident Alert: ${title}`,
-    blocks: [
-      {
-        type: "header",
-        text: {
-          type: "plain_text",
-          text: `🚨 Incident Alert: ${title}`,
-          emoji: true,
-        },
-      },
-      {
-        type: "section",
-        fields: [
-          {
-            type: "mrkdwn",
-            text: `*Severity:*\n${severityFormatted}`,
-          },
-          {
-            type: "mrkdwn",
-            text: `*Status:*\n\`${status}\``,
-          },
-          {
-            type: "mrkdwn",
-            text: `*Project:*\n*${projectName}*`,
-          },
-          {
-            type: "mrkdwn",
-            text: `*Organization:*\n*${organizationName}*`,
-          },
-        ],
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*Description:*\n${description || "No description provided."}`,
-        },
-      },
-      {
-        type: "divider",
-      },
-      {
-        type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: `Incident ID: \`${incidentId}\` | Reported: ${createdAt} | UpNode Incident Engine`,
-          },
-        ],
-      },
-    ],
-  };
+	// Rich block-formatted Slack payload for #incidents channel
+	const slackPayload = {
+		text: `🚨 [${severity}] UpNode Incident Alert: ${title}`,
+		blocks: [
+			{
+				type: "header",
+				text: {
+					type: "plain_text",
+					text: `🚨 Incident Alert: ${title}`,
+					emoji: true,
+				},
+			},
+			{
+				type: "section",
+				fields: [
+					{
+						type: "mrkdwn",
+						text: `*Severity:*\n${severityFormatted}`,
+					},
+					{
+						type: "mrkdwn",
+						text: `*Status:*\n\`${status}\``,
+					},
+					{
+						type: "mrkdwn",
+						text: `*Project:*\n*${projectName}*`,
+					},
+					{
+						type: "mrkdwn",
+						text: `*Organization:*\n*${organizationName}*`,
+					},
+				],
+			},
+			{
+				type: "section",
+				text: {
+					type: "mrkdwn",
+					text: `*Description:*\n${description || "No description provided."}`,
+				},
+			},
+			{
+				type: "divider",
+			},
+			{
+				type: "context",
+				elements: [
+					{
+						type: "mrkdwn",
+						text: `Incident ID: \`${incidentId}\` | Reported: ${createdAt} | UpNode Incident Engine`,
+					},
+				],
+			},
+		],
+	};
 
-  if (targetSlackWebhookUrl) {
-    try {
-      const response = await fetch(targetSlackWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(slackPayload),
-      });
+	if (targetSlackWebhookUrl) {
+		try {
+			const response = await fetch(targetSlackWebhookUrl, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(slackPayload),
+			});
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Slack Webhook API responded with status ${response.status}: ${errorText}`);
-      }
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(
+					`Slack Webhook API responded with status ${response.status}: ${errorText}`,
+				);
+			}
 
-      logger.info({
-        event: "SLACK_ALERT_DISPATCHED",
-        incidentId,
-        severity,
-        projectName,
-      }, `[Slack Alert] Successfully dispatched Slack notification for incident ${incidentId}`);
-      return true;
-    } catch (err: any) {
-      logger.error({
-        event: "SLACK_ALERT_ERROR",
-        incidentId,
-        error: err.message,
-      }, `[Slack Alert Error] Failed to send Slack notification for incident ${incidentId}: ${err.message}`);
-      throw err;
-    }
-  } else {
-    // Simulated fallback log when no Slack Webhook URL is configured
-    logger.info({
-      event: "SLACK_ALERT_SIMULATED",
-      incidentId,
-      severity,
-      title,
-      status,
-      organizationName,
-      projectName,
-    }, `[Slack Notification Simulated] 🚨 [${severity}] ${title} | Status: ${status} | Org: ${organizationName} | Project: ${projectName}`);
-    return true;
-  }
+			logger.info(
+				{
+					event: "SLACK_ALERT_DISPATCHED",
+					incidentId,
+					severity,
+					projectName,
+				},
+				`[Slack Alert] Successfully dispatched Slack notification for incident ${incidentId}`,
+			);
+			return true;
+		} catch (err: any) {
+			logger.error(
+				{
+					event: "SLACK_ALERT_ERROR",
+					incidentId,
+					error: err.message,
+				},
+				`[Slack Alert Error] Failed to send Slack notification for incident ${incidentId}: ${err.message}`,
+			);
+			throw err;
+		}
+	} else {
+		// Simulated fallback log when no Slack Webhook URL is configured
+		logger.info(
+			{
+				event: "SLACK_ALERT_SIMULATED",
+				incidentId,
+				severity,
+				title,
+				status,
+				organizationName,
+				projectName,
+			},
+			`[Slack Notification Simulated] 🚨 [${severity}] ${title} | Status: ${status} | Org: ${organizationName} | Project: ${projectName}`,
+		);
+		return true;
+	}
 };
 
 import { generateUnsubscribeToken } from "../lib/unsubscribe";
@@ -148,87 +176,106 @@ import { generateUnsubscribeToken } from "../lib/unsubscribe";
 /**
  * Fetch organization team members & alert settings from Prisma database and send transactional email alerts
  */
-export const sendEmailNotification = async (payload: IncidentAlertPayload): Promise<{ count: number; recipients: string[] }> => {
-  const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
+export const sendEmailNotification = async (
+	payload: IncidentAlertPayload,
+): Promise<{ count: number; recipients: string[] }> => {
+	const {
+		incidentId,
+		title,
+		description,
+		severity,
+		status,
+		projectId,
+		organizationId,
+		createdAt,
+	} = payload;
 
-  const recipientEmailsSet = new Set<string>();
+	const recipientEmailsSet = new Set<string>();
 
-  // 1. Fetch project & organization alert email configurations
-  try {
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: { organization: true },
-    });
+	// 1. Fetch project & organization alert email configurations
+	try {
+		const project = await prisma.project.findUnique({
+			where: { id: projectId },
+			include: { organization: true },
+		});
 
-    if (project?.alertEmail) {
-      project.alertEmail.split(/[,;\s]+/).forEach((e) => {
-        if (e && e.includes("@")) recipientEmailsSet.add(e.trim().toLowerCase());
-      });
-    }
+		if (project?.alertEmail) {
+			project.alertEmail.split(/[,;\s]+/).forEach((e) => {
+				if (e && e.includes("@"))
+					recipientEmailsSet.add(e.trim().toLowerCase());
+			});
+		}
 
-    if (project?.organization?.alertEmail) {
-      project.organization.alertEmail.split(/[,;\s]+/).forEach((e) => {
-        if (e && e.includes("@")) recipientEmailsSet.add(e.trim().toLowerCase());
-      });
-    }
-  } catch {
-    // Ignore error, fallback to members query
-  }
+		if (project?.organization?.alertEmail) {
+			project.organization.alertEmail.split(/[,;\s]+/).forEach((e) => {
+				if (e && e.includes("@"))
+					recipientEmailsSet.add(e.trim().toLowerCase());
+			});
+		}
+	} catch {
+		// Ignore error, fallback to members query
+	}
 
-  // 2. Query StatusSubscribers from database for this project
-  try {
-    const statusSubscribers = await prisma.statusSubscriber.findMany({
-      where: { projectId },
-      select: { email: true },
-    });
+	// 2. Query StatusSubscribers from database for this project
+	try {
+		const statusSubscribers = await prisma.statusSubscriber.findMany({
+			where: { projectId },
+			select: { email: true },
+		});
 
-    statusSubscribers.forEach((s) => {
-      if (s.email && s.email.includes("@")) {
-        recipientEmailsSet.add(s.email.trim().toLowerCase());
-      }
-    });
-  } catch (err: any) {
-    logger.warn(`[Email Alert] Failed to query status subscribers for project ${projectId}: ${err.message}`);
-  }
+		statusSubscribers.forEach((s) => {
+			if (s.email && s.email.includes("@")) {
+				recipientEmailsSet.add(s.email.trim().toLowerCase());
+			}
+		});
+	} catch (err: any) {
+		logger.warn(
+			`[Email Alert] Failed to query status subscribers for project ${projectId}: ${err.message}`,
+		);
+	}
 
-  // 3. Query organization members and their user email profiles using Prisma
-  try {
-    const members = await prisma.member.findMany({
-      where: { organizationId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+	// 3. Query organization members and their user email profiles using Prisma
+	try {
+		const members = await prisma.member.findMany({
+			where: { organizationId },
+			include: {
+				user: {
+					select: {
+						id: true,
+						name: true,
+						email: true,
+					},
+				},
+			},
+		});
 
-    members.forEach((m) => {
-      if (m.user?.email && m.user.email.includes("@")) {
-        recipientEmailsSet.add(m.user.email.trim().toLowerCase());
-      }
-    });
-  } catch (err: any) {
-    logger.warn(`[Email Alert] Failed to query member emails for organization ${organizationId}: ${err.message}`);
-  }
+		members.forEach((m) => {
+			if (m.user?.email && m.user.email.includes("@")) {
+				recipientEmailsSet.add(m.user.email.trim().toLowerCase());
+			}
+		});
+	} catch (err: any) {
+		logger.warn(
+			`[Email Alert] Failed to query member emails for organization ${organizationId}: ${err.message}`,
+		);
+	}
 
-  const recipientEmails = Array.from(recipientEmailsSet);
+	const recipientEmails = Array.from(recipientEmailsSet);
 
-  if (recipientEmails.length === 0) {
-    logger.warn(`[Email Alert] No alert email recipients found for organization ${organizationId}. Skipping email dispatch.`);
-    return { count: 0, recipients: [] };
-  }
+	if (recipientEmails.length === 0) {
+		logger.warn(
+			`[Email Alert] No alert email recipients found for organization ${organizationId}. Skipping email dispatch.`,
+		);
+		return { count: 0, recipients: [] };
+	}
 
-  const clientBaseUrl = env.CLIENT_URL || "http://localhost:3000";
+	const clientBaseUrl = env.CLIENT_URL || "http://localhost:3000";
 
-  const getHtmlContentForEmail = (recipientEmail: string) => {
-    const token = generateUnsubscribeToken(recipientEmail, projectId);
-    const unsubscribeUrl = `${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmail)}&project=${projectId}&token=${token}`;
+	const getHtmlContentForEmail = (recipientEmail: string) => {
+		const token = generateUnsubscribeToken(recipientEmail, projectId);
+		const unsubscribeUrl = `${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmail)}&project=${projectId}&token=${token}`;
 
-    return `
+		return `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
         <div style="background-color: #fff5f5; border-left: 4px solid #e53e3e; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
           <h2 style="color: #c53030; margin: 0 0 6px 0; font-size: 18px;">🚨 UpNode Incident Alert</h2>
@@ -270,273 +317,362 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
         </div>
       </div>
     `;
-  };
+	};
 
-  if (env.RESEND_API_KEY) {
-    try {
-      const fromEmail = env.EMAIL_FROM || "onboarding@resend.dev";
-      const targetTo = recipientEmails.length > 0 ? recipientEmails : ["rashedulraha.bd@gmail.com"];
+	if (env.RESEND_API_KEY) {
+		try {
+			const fromEmail = env.EMAIL_FROM || "onboarding@resend.dev";
+			const targetTo =
+				recipientEmails.length > 0
+					? recipientEmails
+					: ["rashedulraha.bd@gmail.com"];
 
-      let response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: fromEmail,
-          to: targetTo,
-          subject: `[${severity}] UpNode Incident Alert: ${title}`,
-          html: getHtmlContentForEmail(targetTo[0]),
-          headers: {
-            "List-Unsubscribe": `<${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(targetTo[0])}&project=${projectId}&token=${generateUnsubscribeToken(targetTo[0], projectId)}>`,
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-          },
-        }),
-      });
+			let response = await fetch("https://api.resend.com/emails", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${env.RESEND_API_KEY}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					from: fromEmail,
+					to: targetTo,
+					subject: `[${severity}] UpNode Incident Alert: ${title}`,
+					html: getHtmlContentForEmail(targetTo[0]),
+					headers: {
+						"List-Unsubscribe": `<${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(targetTo[0])}&project=${projectId}&token=${generateUnsubscribeToken(targetTo[0], projectId)}>`,
+						"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+					},
+				}),
+			});
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (errorText.includes("only send to your own email") || errorText.includes("domain")) {
-          logger.warn(`[Email Alert Resend Fallback] Retrying incident alert email to verified owner rashedulraha.bd@gmail.com...`);
-          response = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${env.RESEND_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from: "onboarding@resend.dev",
-              to: ["rashedulraha.bd@gmail.com"],
-              subject: `[${severity}] UpNode Incident Alert: ${title}`,
-              html: getHtmlContentForEmail("rashedulraha.bd@gmail.com"),
-            }),
-          });
-        }
-      }
+			if (!response.ok) {
+				const errorText = await response.text();
+				if (
+					errorText.includes("only send to your own email") ||
+					errorText.includes("domain")
+				) {
+					logger.warn(
+						`[Email Alert Resend Fallback] Retrying incident alert email to verified owner rashedulraha.bd@gmail.com...`,
+					);
+					response = await fetch("https://api.resend.com/emails", {
+						method: "POST",
+						headers: {
+							Authorization: `Bearer ${env.RESEND_API_KEY}`,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							from: "onboarding@resend.dev",
+							to: ["rashedulraha.bd@gmail.com"],
+							subject: `[${severity}] UpNode Incident Alert: ${title}`,
+							html: getHtmlContentForEmail("rashedulraha.bd@gmail.com"),
+						}),
+					});
+				}
+			}
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Resend Email API responded with status ${response.status}: ${errorText}`);
-      }
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(
+					`Resend Email API responded with status ${response.status}: ${errorText}`,
+				);
+			}
 
-      logger.info({
-        event: "EMAIL_ALERT_DISPATCHED",
-        incidentId,
-        recipientCount: recipientEmails.length,
-      }, `[Email Alert] Sent alert email via Resend to ${recipientEmails.length} recipients for incident ${incidentId}`);
-      return { count: recipientEmails.length, recipients: recipientEmails };
-    } catch (err: any) {
-      logger.error({
-        event: "EMAIL_ALERT_ERROR",
-        incidentId,
-        error: err.message,
-      }, `[Email Alert Error] Failed to send email via Resend: ${err.message}`);
-      throw err;
-    }
-  } else {
-    // Simulated fallback log when RESEND_API_KEY is not set
-    logger.info({
-      event: "EMAIL_ALERT_SIMULATED",
-      incidentId,
-      recipientCount: recipientEmails.length,
-      recipients: recipientEmails,
-    }, `[Email Notification Simulated] ✉️ Sent incident alert email to ${recipientEmails.length} recipients: ${recipientEmails.join(", ")}`);
-    return { count: recipientEmails.length, recipients: recipientEmails };
-  }
+			logger.info(
+				{
+					event: "EMAIL_ALERT_DISPATCHED",
+					incidentId,
+					recipientCount: recipientEmails.length,
+				},
+				`[Email Alert] Sent alert email via Resend to ${recipientEmails.length} recipients for incident ${incidentId}`,
+			);
+			return { count: recipientEmails.length, recipients: recipientEmails };
+		} catch (err: any) {
+			logger.error(
+				{
+					event: "EMAIL_ALERT_ERROR",
+					incidentId,
+					error: err.message,
+				},
+				`[Email Alert Error] Failed to send email via Resend: ${err.message}`,
+			);
+			throw err;
+		}
+	} else {
+		// Simulated fallback log when RESEND_API_KEY is not set
+		logger.info(
+			{
+				event: "EMAIL_ALERT_SIMULATED",
+				incidentId,
+				recipientCount: recipientEmails.length,
+				recipients: recipientEmails,
+			},
+			`[Email Notification Simulated] ✉️ Sent incident alert email to ${recipientEmails.length} recipients: ${recipientEmails.join(", ")}`,
+		);
+		return { count: recipientEmails.length, recipients: recipientEmails };
+	}
 };
 
 /**
  * Query Prisma database for active custom webhooks and dispatch HTTP POST payloads for incident events
  */
-export const sendWebhookNotifications = async (payload: IncidentAlertPayload): Promise<{ count: number; dispatchedUrls: string[] }> => {
-  const { incidentId, title, description, severity, status, projectId, organizationId, createdAt } = payload;
-  const eventName = status === "RESOLVED" ? "incident.resolved" : "incident.created";
+export const sendWebhookNotifications = async (
+	payload: IncidentAlertPayload,
+): Promise<{ count: number; dispatchedUrls: string[] }> => {
+	const {
+		incidentId,
+		title,
+		description,
+		severity,
+		status,
+		projectId,
+		organizationId,
+		createdAt,
+	} = payload;
+	const eventName =
+		status === "RESOLVED" ? "incident.resolved" : "incident.created";
 
-  let webhooks: any[] = [];
-  try {
-    webhooks = await prisma.webhook.findMany({
-      where: {
-        organizationId,
-        enabled: true,
-        OR: [{ projectId }, { projectId: null }],
-      },
-    });
-  } catch (err: any) {
-    logger.warn(`[Custom Webhook Alert] Failed to query webhooks for organization ${organizationId}: ${err.message}`);
-    return { count: 0, dispatchedUrls: [] };
-  }
+	let webhooks: any[] = [];
+	try {
+		webhooks = await prisma.webhook.findMany({
+			where: {
+				organizationId,
+				enabled: true,
+				OR: [{ projectId }, { projectId: null }],
+			},
+		});
+	} catch (err: any) {
+		logger.warn(
+			`[Custom Webhook Alert] Failed to query webhooks for organization ${organizationId}: ${err.message}`,
+		);
+		return { count: 0, dispatchedUrls: [] };
+	}
 
-  // Filter webhooks matching eventName or wildcard "*"
-  const matchingWebhooks = webhooks.filter((w) => {
-    if (!w.events || w.events.length === 0) return true;
-    return w.events.includes(eventName) || w.events.includes("*");
-  });
+	// Filter webhooks matching eventName or wildcard "*"
+	const matchingWebhooks = webhooks.filter((w) => {
+		if (!w.events || w.events.length === 0) return true;
+		return w.events.includes(eventName) || w.events.includes("*");
+	});
 
-  if (matchingWebhooks.length === 0) {
-    return { count: 0, dispatchedUrls: [] };
-  }
+	if (matchingWebhooks.length === 0) {
+		return { count: 0, dispatchedUrls: [] };
+	}
 
-  const webhookBody = {
-    event: eventName,
-    timestamp: new Date().toISOString(),
-    data: {
-      incidentId,
-      title,
-      description,
-      severity,
-      status,
-      projectId,
-      organizationId,
-      createdAt,
-    },
-  };
+	const webhookBody = {
+		event: eventName,
+		timestamp: new Date().toISOString(),
+		data: {
+			incidentId,
+			title,
+			description,
+			severity,
+			status,
+			projectId,
+			organizationId,
+			createdAt,
+		},
+	};
 
-  const payloadString = JSON.stringify(webhookBody);
-  const dispatchedUrls: string[] = [];
+	const payloadString = JSON.stringify(webhookBody);
+	const dispatchedUrls: string[] = [];
 
-  await Promise.allSettled(
-    matchingWebhooks.map(async (webhook) => {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        "User-Agent": "UpNode-Webhook/1.0",
-        "X-UpNode-Event": eventName,
-      };
+	await Promise.allSettled(
+		matchingWebhooks.map(async (webhook) => {
+			const headers: Record<string, string> = {
+				"Content-Type": "application/json",
+				"User-Agent": "UpNode-Webhook/1.0",
+				"X-UpNode-Event": eventName,
+			};
 
-      if (webhook.secret) {
-        const hmac = crypto.createHmac("sha256", webhook.secret).update(payloadString).digest("hex");
-        headers["X-UpNode-Signature"] = `sha256=${hmac}`;
-      }
+			if (webhook.secret) {
+				const hmac = crypto
+					.createHmac("sha256", webhook.secret)
+					.update(payloadString)
+					.digest("hex");
+				headers["X-UpNode-Signature"] = `sha256=${hmac}`;
+			}
 
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+			try {
+				const controller = new AbortController();
+				const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        const response = await fetch(webhook.url, {
-          method: "POST",
-          headers,
-          body: payloadString,
-          signal: controller.signal,
-        });
+				const response = await fetch(webhook.url, {
+					method: "POST",
+					headers,
+					body: payloadString,
+					signal: controller.signal,
+				});
 
-        clearTimeout(timeoutId);
+				clearTimeout(timeoutId);
 
-        if (!response.ok) {
-          logger.warn(`[Custom Webhook Alert] Webhook endpoint ${webhook.url} returned status ${response.status}`);
-        } else {
-          logger.info({
-            event: "CUSTOM_WEBHOOK_DISPATCHED",
-            incidentId,
-            webhookId: webhook.id,
-            url: webhook.url,
-            eventName,
-          }, `[Custom Webhook Alert] Successfully dispatched '${eventName}' webhook payload to ${webhook.url}`);
-          dispatchedUrls.push(webhook.url);
-        }
-      } catch (err: any) {
-        logger.error({
-          event: "CUSTOM_WEBHOOK_ERROR",
-          incidentId,
-          webhookId: webhook.id,
-          url: webhook.url,
-          error: err.message,
-        }, `[Custom Webhook Error] Failed to dispatch webhook to ${webhook.url}: ${err.message}`);
-      }
-    })
-  );
+				if (!response.ok) {
+					logger.warn(
+						`[Custom Webhook Alert] Webhook endpoint ${webhook.url} returned status ${response.status}`,
+					);
+				} else {
+					logger.info(
+						{
+							event: "CUSTOM_WEBHOOK_DISPATCHED",
+							incidentId,
+							webhookId: webhook.id,
+							url: webhook.url,
+							eventName,
+						},
+						`[Custom Webhook Alert] Successfully dispatched '${eventName}' webhook payload to ${webhook.url}`,
+					);
+					dispatchedUrls.push(webhook.url);
+				}
+			} catch (err: any) {
+				logger.error(
+					{
+						event: "CUSTOM_WEBHOOK_ERROR",
+						incidentId,
+						webhookId: webhook.id,
+						url: webhook.url,
+						error: err.message,
+					},
+					`[Custom Webhook Error] Failed to dispatch webhook to ${webhook.url}: ${err.message}`,
+				);
+			}
+		}),
+	);
 
-  return { count: dispatchedUrls.length, dispatchedUrls };
+	return { count: dispatchedUrls.length, dispatchedUrls };
 };
 
 export const processAlertJob = async (job: Job<IncidentAlertPayload>) => {
-  const { incidentId } = job.data;
-  logger.info({
-    event: "ALERT_JOB_PROCESSING",
-    jobId: job.id,
-    attempt: job.attemptsMade + 1,
-    incidentId,
-  }, `[Alert Worker] Processing Job #${job.id} (Attempt ${job.attemptsMade + 1}): Alert for Incident ${incidentId}`);
+	const { incidentId } = job.data;
+	logger.info(
+		{
+			event: "ALERT_JOB_PROCESSING",
+			jobId: job.id,
+			attempt: job.attemptsMade + 1,
+			incidentId,
+		},
+		`[Alert Worker] Processing Job #${job.id} (Attempt ${job.attemptsMade + 1}): Alert for Incident ${incidentId}`,
+	);
 
-  const [slackResult, emailResult, webhookResult] = await Promise.allSettled([
-    sendSlackNotification(job.data),
-    sendEmailNotification(job.data),
-    sendWebhookNotifications(job.data),
-  ]);
+	const [slackResult, emailResult, webhookResult] = await Promise.allSettled([
+		sendSlackNotification(job.data),
+		sendEmailNotification(job.data),
+		sendWebhookNotifications(job.data),
+	]);
 
-  const slackSuccess = slackResult.status === "fulfilled" && slackResult.value === true;
-  const emailData = emailResult.status === "fulfilled" ? emailResult.value : { count: 0, recipients: [] };
-  const webhookData = webhookResult.status === "fulfilled" ? webhookResult.value : { count: 0, dispatchedUrls: [] };
+	const slackSuccess =
+		slackResult.status === "fulfilled" && slackResult.value === true;
+	const emailData =
+		emailResult.status === "fulfilled"
+			? emailResult.value
+			: { count: 0, recipients: [] };
+	const webhookData =
+		webhookResult.status === "fulfilled"
+			? webhookResult.value
+			: { count: 0, dispatchedUrls: [] };
 
-  if (slackResult.status === "rejected") {
-    logger.error({
-      event: "SLACK_DISPATCH_REJECTED",
-      jobId: job.id,
-      error: slackResult.reason?.message || slackResult.reason,
-    }, `[Alert Worker Job #${job.id}] Slack dispatch rejected: ${slackResult.reason?.message || slackResult.reason}`);
-  }
+	if (slackResult.status === "rejected") {
+		logger.error(
+			{
+				event: "SLACK_DISPATCH_REJECTED",
+				jobId: job.id,
+				error: slackResult.reason?.message || slackResult.reason,
+			},
+			`[Alert Worker Job #${job.id}] Slack dispatch rejected: ${slackResult.reason?.message || slackResult.reason}`,
+		);
+	}
 
-  if (emailResult.status === "rejected") {
-    logger.error({
-      event: "EMAIL_DISPATCH_REJECTED",
-      jobId: job.id,
-      error: emailResult.reason?.message || emailResult.reason,
-    }, `[Alert Worker Job #${job.id}] Email dispatch rejected: ${emailResult.reason?.message || emailResult.reason}`);
-  }
+	if (emailResult.status === "rejected") {
+		logger.error(
+			{
+				event: "EMAIL_DISPATCH_REJECTED",
+				jobId: job.id,
+				error: emailResult.reason?.message || emailResult.reason,
+			},
+			`[Alert Worker Job #${job.id}] Email dispatch rejected: ${emailResult.reason?.message || emailResult.reason}`,
+		);
+	}
 
-  if (webhookResult.status === "rejected") {
-    logger.error({
-      event: "WEBHOOK_DISPATCH_REJECTED",
-      jobId: job.id,
-      error: webhookResult.reason?.message || webhookResult.reason,
-    }, `[Alert Worker Job #${job.id}] Custom Webhook dispatch rejected: ${webhookResult.reason?.message || webhookResult.reason}`);
-  }
+	if (webhookResult.status === "rejected") {
+		logger.error(
+			{
+				event: "WEBHOOK_DISPATCH_REJECTED",
+				jobId: job.id,
+				error: webhookResult.reason?.message || webhookResult.reason,
+			},
+			`[Alert Worker Job #${job.id}] Custom Webhook dispatch rejected: ${webhookResult.reason?.message || webhookResult.reason}`,
+		);
+	}
 
-  return {
-    sentSlack: slackSuccess,
-    sentEmailCount: emailData.count,
-    recipients: emailData.recipients,
-    sentWebhookCount: webhookData.count,
-    dispatchedWebhooks: webhookData.dispatchedUrls,
-    timestamp: new Date().toISOString(),
-  };
+	return {
+		sentSlack: slackSuccess,
+		sentEmailCount: emailData.count,
+		recipients: emailData.recipients,
+		sentWebhookCount: webhookData.count,
+		dispatchedWebhooks: webhookData.dispatchedUrls,
+		timestamp: new Date().toISOString(),
+	};
 };
 
 export const startAlertWorker = () => {
-  const worker = new Worker<IncidentAlertPayload>(ALERT_QUEUE_NAME, processAlertJob, {
-    connection: redisConnectionOptions,
-    concurrency: 5,
-  });
+	const worker = new Worker<IncidentAlertPayload>(
+		ALERT_QUEUE_NAME,
+		processAlertJob,
+		{
+			connection: redisConnectionOptions,
+			concurrency: 5,
+		},
+	);
 
-  worker.on("completed", (job: Job<IncidentAlertPayload>, result) => {
-    logger.info({
-      event: "ALERT_JOB_COMPLETED",
-      jobId: job.id,
-      result,
-    }, `[Alert Worker] Job #${job.id} completed successfully`);
-  });
+	worker.on("completed", (job: Job<IncidentAlertPayload>, result) => {
+		logger.info(
+			{
+				event: "ALERT_JOB_COMPLETED",
+				jobId: job.id,
+				result,
+			},
+			`[Alert Worker] Job #${job.id} completed successfully`,
+		);
+	});
 
-  worker.on("failed", (job: Job<IncidentAlertPayload> | undefined, err: Error) => {
-    if (job) {
-      logger.error({
-        event: "ALERT_JOB_FAILED",
-        jobId: job.id,
-        attempt: job.attemptsMade,
-        maxAttempts: job.opts.attempts,
-        error: err.message,
-      }, `[Alert Worker] Job #${job.id} failed (Attempt ${job.attemptsMade}/${job.opts.attempts}). Error: ${err.message}`);
-    } else {
-      logger.error({ event: "ALERT_JOB_FAILED", error: err.message }, `[Alert Worker] Unknown job failed: ${err.message}`);
-    }
-  });
+	worker.on(
+		"failed",
+		(job: Job<IncidentAlertPayload> | undefined, err: Error) => {
+			if (job) {
+				logger.error(
+					{
+						event: "ALERT_JOB_FAILED",
+						jobId: job.id,
+						attempt: job.attemptsMade,
+						maxAttempts: job.opts.attempts,
+						error: err.message,
+					},
+					`[Alert Worker] Job #${job.id} failed (Attempt ${job.attemptsMade}/${job.opts.attempts}). Error: ${err.message}`,
+				);
+			} else {
+				logger.error(
+					{ event: "ALERT_JOB_FAILED", error: err.message },
+					`[Alert Worker] Unknown job failed: ${err.message}`,
+				);
+			}
+		},
+	);
 
-  worker.on("error", (err: Error) => {
-    if (err.message.includes("ETIMEDOUT") || err.message.includes("ECONNREFUSED")) {
-      logger.warn(`[Alert Worker] Redis connection network warning: ${err.message}`);
-    } else {
-      logger.error({ event: "ALERT_WORKER_ERROR", error: err.message }, `[Alert Worker] Unexpected worker error: ${err.message}`);
-    }
-  });
+	worker.on("error", (err: Error) => {
+		if (
+			err.message.includes("ETIMEDOUT") ||
+			err.message.includes("ECONNREFUSED")
+		) {
+			logger.warn(
+				`[Alert Worker] Redis connection network warning: ${err.message}`,
+			);
+		} else {
+			logger.error(
+				{ event: "ALERT_WORKER_ERROR", error: err.message },
+				`[Alert Worker] Unexpected worker error: ${err.message}`,
+			);
+		}
+	});
 
-  logger.info(`[Alert Worker] Alert worker started listening on queue: ${ALERT_QUEUE_NAME}`);
-  return worker;
+	logger.info(
+		`[Alert Worker] Alert worker started listening on queue: ${ALERT_QUEUE_NAME}`,
+	);
+	return worker;
 };
