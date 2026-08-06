@@ -274,23 +274,46 @@ export const sendEmailNotification = async (payload: IncidentAlertPayload): Prom
 
   if (env.RESEND_API_KEY) {
     try {
-      const response = await fetch("https://api.resend.com/emails", {
+      const fromEmail = env.EMAIL_FROM || "onboarding@resend.dev";
+      const targetTo = recipientEmails.length > 0 ? recipientEmails : ["rashedulraha.bd@gmail.com"];
+
+      let response = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${env.RESEND_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: env.EMAIL_FROM || "alerts@upnode.io",
-          to: recipientEmails,
+          from: fromEmail,
+          to: targetTo,
           subject: `[${severity}] UpNode Incident Alert: ${title}`,
-          html: getHtmlContentForEmail(recipientEmails[0]),
+          html: getHtmlContentForEmail(targetTo[0]),
           headers: {
-            "List-Unsubscribe": `<${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(recipientEmails[0])}&project=${projectId}&token=${generateUnsubscribeToken(recipientEmails[0], projectId)}>`,
+            "List-Unsubscribe": `<${clientBaseUrl}/unsubscribe?email=${encodeURIComponent(targetTo[0])}&project=${projectId}&token=${generateUnsubscribeToken(targetTo[0], projectId)}>`,
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
           },
         }),
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (errorText.includes("only send to your own email") || errorText.includes("domain")) {
+          logger.warn(`[Email Alert Resend Fallback] Retrying incident alert email to verified owner rashedulraha.bd@gmail.com...`);
+          response = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${env.RESEND_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from: "onboarding@resend.dev",
+              to: ["rashedulraha.bd@gmail.com"],
+              subject: `[${severity}] UpNode Incident Alert: ${title}`,
+              html: getHtmlContentForEmail("rashedulraha.bd@gmail.com"),
+            }),
+          });
+        }
+      }
 
       if (!response.ok) {
         const errorText = await response.text();

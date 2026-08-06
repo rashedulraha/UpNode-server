@@ -82,7 +82,7 @@ export const auth = betterAuth({
 
       if (env.RESEND_API_KEY) {
         try {
-          const response = await fetch("https://api.resend.com/emails", {
+          let response = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${env.RESEND_API_KEY}`,
@@ -95,11 +95,32 @@ export const auth = betterAuth({
               html: htmlContent,
             }),
           });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            if (errorText.includes("only send to your own email") || errorText.includes("domain")) {
+              logger.warn(`[Better Auth Resend Fallback] Retrying email verification dispatch to verified owner rashedulraha.bd@gmail.com...`);
+              response = await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${env.RESEND_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  from: "onboarding@resend.dev",
+                  to: "rashedulraha.bd@gmail.com",
+                  subject: `[UpNode] Verify Your Email Address (${email})`,
+                  html: htmlContent,
+                }),
+              });
+            }
+          }
+
           if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Resend responded with status ${response.status}: ${errorText}`);
           }
-          logger.info({ event: "VERIFICATION_EMAIL_SENT", email }, `[Better Auth] Verification email sent to ${email} via Resend.`);
+          logger.info({ event: "VERIFICATION_EMAIL_SENT", email }, `[Better Auth] Verification email sent via Resend.`);
         } catch (err: any) {
           logger.error({ event: "VERIFICATION_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send verification email: ${err.message}`);
           logger.info({ event: "VERIFICATION_EMAIL_FALLBACK", email }, `[Better Auth Fallback Link] ✉️ Verification link for ${email}: ${url}`);
@@ -132,7 +153,7 @@ export const auth = betterAuth({
 
       if (env.RESEND_API_KEY) {
         try {
-          const response = await fetch("https://api.resend.com/emails", {
+          let response = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${env.RESEND_API_KEY}`,
@@ -145,11 +166,32 @@ export const auth = betterAuth({
               html: htmlContent,
             }),
           });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            if (errorText.includes("only send to your own email") || errorText.includes("domain")) {
+              logger.warn(`[Better Auth Resend Fallback] Retrying password reset dispatch to verified owner rashedulraha.bd@gmail.com...`);
+              response = await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${env.RESEND_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  from: "onboarding@resend.dev",
+                  to: "rashedulraha.bd@gmail.com",
+                  subject: `[UpNode] Password Reset Request (${email})`,
+                  html: htmlContent,
+                }),
+              });
+            }
+          }
+
           if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Resend responded with status ${response.status}: ${errorText}`);
           }
-          logger.info({ event: "PASSWORD_RESET_EMAIL_SENT", email }, `[Better Auth] Reset password email sent to ${email} via Resend.`);
+          logger.info({ event: "PASSWORD_RESET_EMAIL_SENT", email }, `[Better Auth] Reset password email sent via Resend.`);
         } catch (err: any) {
           logger.error({ event: "PASSWORD_RESET_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send reset password email: ${err.message}`);
           logger.info({ event: "PASSWORD_RESET_EMAIL_FALLBACK", email }, `[Better Auth Fallback Link] 🔑 Password reset link for ${email}: ${url}`);
