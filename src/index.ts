@@ -2,16 +2,17 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
-import { toNodeHandler } from "better-auth/node";
+import { toNodeHandler, fromNodeHeaders } from "better-auth/node";
 
 import { env } from "./config/env";
 import { logger } from "./lib/logger";
 import { auth } from "./lib/auth";
+import { prisma } from "./lib/prisma";
+import { invalidateUserSessionCache } from "./middlewares/auth.middleware";
 import { projectRoutes } from "./modules/projects/project.routes";
 import { incidentRoutes } from "./modules/incidents/incident.routes";
 import { streamRoutes } from "./modules/stream/stream.routes";
 import { organizationRoutes } from "./modules/organization/organization.routes";
-import { adminRoutes } from "./modules/admin/admin.routes";
 import { userRoutes } from "./modules/users/user.routes";
 import { webhookRoutes } from "./modules/webhooks/webhook.routes";
 import { errorHandler } from "./middlewares/error.middleware";
@@ -51,14 +52,47 @@ app.use("/api", apiRateLimiter);
 app.use("/api/stream", ingestionRateLimiter);
 app.use("/api/auth", authRateLimiter);
 
-// 5. Better Auth API Handler
+// 5. Skip Email Verification Endpoint (Dev / Localhost Mode)
+app.post("/api/auth/skip-verification", async (req, res) => {
+  try {
+    const session = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+
+    if (!session || !session.user) {
+      res.status(401).json({ error: "Unauthorized: No active session found." });
+      return;
+    }
+
+    await prisma.user.update({
+      where: { id: session.user.id },
+      data: { emailVerified: true },
+    });
+
+    await invalidateUserSessionCache(session.user.id);
+
+    logger.info(
+      { event: "EMAIL_VERIFICATION_SKIPPED", userId: session.user.id },
+      `[Auth] User ${session.user.email} skipped email verification.`
+    );
+
+    res.json({ success: true, message: "Email verification skipped successfully." });
+  } catch (err: any) {
+    logger.error(
+      { event: "SKIP_VERIFICATION_ERROR", error: err.message },
+      `[Auth] Failed to skip email verification: ${err.message}`
+    );
+    res.status(500).json({ error: "Failed to skip email verification." });
+  }
+});
+
+// 6. Better Auth API Handler
 app.all("/api/auth/*path", toNodeHandler(auth.handler));
 
 // 6. Mount Feature Modules
 app.use("/api/projects", projectRoutes);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/organization", organizationRoutes);
-app.use("/api/admin", adminRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api", streamRoutes);
