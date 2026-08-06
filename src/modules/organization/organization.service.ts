@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { UserRole, UserRole as Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { InviteMemberInput, UpdateMemberRoleInput } from "./organization.validation";
 import crypto from "crypto";
@@ -69,9 +69,9 @@ export class OrganizationService {
   }
 
   /**
-   * Get all organizations a user belongs to
+   * Get all organizations accessible to a user.
    */
-  async getUserOrganizations(userId: string) {
+  async getUserOrganizations(userId: string, userRole?: string) {
     const memberships = await prisma.member.findMany({
       where: { userId },
       include: {
@@ -102,8 +102,6 @@ export class OrganizationService {
     });
 
     if (!user) {
-      const userCount = await prisma.user.count();
-      const userRole = userCount === 0 ? Role.SUPER_ADMIN : Role.VIEWER;
       const fallbackName = normalizedEmail.split("@")[0];
       user = await prisma.user.create({
         data: {
@@ -111,7 +109,7 @@ export class OrganizationService {
           name: fallbackName.charAt(0).toUpperCase() + fallbackName.slice(1),
           email: normalizedEmail,
           emailVerified: false,
-          role: userRole,
+          role: Role.ADMIN,
           createdAt: new Date(),
           updatedAt: new Date(),
         },

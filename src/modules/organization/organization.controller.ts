@@ -81,8 +81,8 @@ export class OrganizationController {
 
   async getUserOrganizations(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = req.user!.id;
-      const orgs = await organizationService.getUserOrganizations(userId);
+      const user = req.user!;
+      const orgs = await organizationService.getUserOrganizations(user.id, user.role);
       res.json(orgs);
     } catch (error) {
       next(error);
