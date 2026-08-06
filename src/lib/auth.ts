@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
 import { env } from "../config/env";
-import { Role } from "@prisma/client";
+import { UserRole, UserRole as Role } from "@prisma/client";
 import { logger } from "./logger";
 
 export const auth = betterAuth({
@@ -32,12 +32,11 @@ export const auth = betterAuth({
     },
   },
 
-
   user: {
     additionalFields: {
       role: {
         type: "string",
-        defaultValue: Role.VIEWER,
+        defaultValue: UserRole.ADMIN,
       },
       isBlocked: {
         type: "boolean",
@@ -48,15 +47,39 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => {
-          const userCount = await prisma.user.count();
-          const role = userCount === 0 ? Role.SUPER_ADMIN : Role.VIEWER;
-          return {
+        after: async (user) => {
+          // When a new user registers, set their user role to ADMIN and create their primary Organization as ADMIN
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { role: UserRole.ADMIN },
+          });
+
+          const orgName = `${user.name || user.email.split("@")[0]}'s Org`;
+          const baseSlug = (user.name || user.email.split("@")[0])
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "");
+          const slug = `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+          const organization = await prisma.organization.create({
             data: {
-              ...user,
-              role,
+              name: orgName,
+              slug,
+              alertEmail: user.email,
+              members: {
+                create: {
+                  userId: user.id,
+                  role: Role.ADMIN,
+                },
+              },
             },
-          };
+          });
+
+          logger.info(
+            { event: "ORGANIZATION_AUTO_CREATED", userId: user.id, orgId: organization.id },
+            `[Auth] Created organization '${orgName}' (${organization.id}) with ADMIN role for new user ${user.email}`
+          );
         },
       },
     },
@@ -66,13 +89,25 @@ export const auth = betterAuth({
     autoSignInAfterVerification: true,
     sendVerificationEmail: async ({ user, url }) => {
       const email = user.email;
+
+      let clientVerificationUrl = url;
+      try {
+        const parsedUrl = new URL(url);
+        const token = parsedUrl.searchParams.get("token");
+        if (token) {
+          clientVerificationUrl = `${env.CLIENT_URL}/verify-email?token=${encodeURIComponent(token)}`;
+        }
+      } catch {
+        // Fallback to original url
+      }
+
       const htmlContent = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
           <h2 style="color: #0f172a; margin: 0 0 12px 0; font-size: 20px; font-weight: 700; text-transform: uppercase; font-family: monospace;">[UPNODE] Verify Your Email Address</h2>
           <p style="color: #334155; font-size: 14px; line-height: 1.5; margin-bottom: 20px;">Hi ${user.name || "there"},</p>
           <p style="color: #334155; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Thank you for registering on UpNode. Click the button below to verify your email address and activate your telemetry portal access:</p>
           <p style="margin-bottom: 24px;">
-            <a href="${url}" style="display: inline-block; padding: 10px 20px; background-color: #0f172a; color: #ffffff; text-decoration: none; border-radius: 0px; font-weight: 600; font-family: monospace; font-size: 12px; border: 1px solid #000000; text-transform: uppercase;">[VERIFY_EMAIL]</a>
+            <a href="${clientVerificationUrl}" style="display: inline-block; padding: 10px 20px; background-color: #0f172a; color: #ffffff; text-decoration: none; border-radius: 0px; font-weight: 600; font-family: monospace; font-size: 12px; border: 1px solid #000000; text-transform: uppercase;">[VERIFY_EMAIL]</a>
           </p>
           <p style="color: #64748b; font-size: 12px; line-height: 1.5; border-top: 1px solid #edf2f7; padding-top: 16px; margin-top: 24px; font-family: monospace;">
             If you did not create an account on UpNode, you can safely ignore this email.
@@ -80,16 +115,27 @@ export const auth = betterAuth({
         </div>
       `;
 
+      // Always print link clearly in terminal console for easy localhost testing
+      console.log(
+        `\n=================================================================`,
+      );
+      console.log(`✉️  [UPNODE VERIFICATION LINK FOR: ${email}]`);
+      console.log(`👉 ${clientVerificationUrl}`);
+      console.log(
+        `=================================================================\n`,
+      );
+
       if (env.RESEND_API_KEY) {
         try {
-          let response = await fetch("https://api.resend.com/emails", {
+          const fromEmail = env.EMAIL_FROM || "onboarding@resend.dev";
+          const response = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${env.RESEND_API_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: env.EMAIL_FROM || "onboarding@resend.dev",
+              from: fromEmail,
               to: email,
               subject: "[UpNode] Verify Your Email Address",
               html: htmlContent,
@@ -98,37 +144,62 @@ export const auth = betterAuth({
 
           if (!response.ok) {
             const errorText = await response.text();
-            if (errorText.includes("only send to your own email") || errorText.includes("domain")) {
-              logger.warn(`[Better Auth Resend Fallback] Retrying email verification dispatch to verified owner rashedulraha.bd@gmail.com...`);
-              response = await fetch("https://api.resend.com/emails", {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${env.RESEND_API_KEY}`,
-                  "Content-Type": "application/json",
+            if (
+              errorText.includes("only send to your own email") ||
+              errorText.includes("domain") ||
+              response.status === 403
+            ) {
+              logger.warn(
+                `[Better Auth Resend Fallback] Resend default domain restriction detected. Retrying dispatch to account owner rashedulraha.bd@gmail.com...`,
+              );
+              const fallbackResponse = await fetch(
+                "https://api.resend.com/emails",
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${env.RESEND_API_KEY}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    from: "onboarding@resend.dev",
+                    to: "rashedulraha.bd@gmail.com",
+                    subject: `[UpNode] Verify Your Email Address (${email})`,
+                    html: htmlContent,
+                  }),
                 },
-                body: JSON.stringify({
-                  from: "onboarding@resend.dev",
-                  to: "rashedulraha.bd@gmail.com",
-                  subject: `[UpNode] Verify Your Email Address (${email})`,
-                  html: htmlContent,
-                }),
-              });
+              );
+
+              if (!fallbackResponse.ok) {
+                const fallbackError = await fallbackResponse.text();
+                throw new Error(
+                  `Resend fallback status ${fallbackResponse.status}: ${fallbackError}`,
+                );
+              }
+            } else {
+              throw new Error(`Resend status ${response.status}: ${errorText}`);
             }
           }
 
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Resend responded with status ${response.status}: ${errorText}`);
-          }
-          logger.info({ event: "VERIFICATION_EMAIL_SENT", email }, `[Better Auth] Verification email sent via Resend.`);
+          logger.info(
+            { event: "VERIFICATION_EMAIL_SENT", email },
+            `[Better Auth] Verification email sent via Resend.`,
+          );
         } catch (err: any) {
-          logger.error({ event: "VERIFICATION_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send verification email: ${err.message}`);
-          logger.info({ event: "VERIFICATION_EMAIL_FALLBACK", email }, `[Better Auth Fallback Link] ✉️ Verification link for ${email}: ${url}`);
+          logger.error(
+            { event: "VERIFICATION_EMAIL_ERROR", email, error: err.message },
+            `[Better Auth Error] Failed to send verification email: ${err.message}`,
+          );
+          logger.info(
+            { event: "VERIFICATION_EMAIL_FALLBACK", email },
+            `[Better Auth Fallback Link] ✉️ Verification link for ${email}: ${clientVerificationUrl}`,
+          );
         }
       } else {
-        logger.info({ event: "VERIFICATION_EMAIL_SIMULATED", email }, `[Better Auth Simulated Email] ✉️ Email verification link for ${email}: ${url}`);
+        logger.info(
+          { event: "VERIFICATION_EMAIL_SIMULATED", email },
+          `[Better Auth Simulated Email] ✉️ Email verification link for ${email}: ${clientVerificationUrl}`,
+        );
       }
-
     },
   },
   emailAndPassword: {
@@ -137,13 +208,25 @@ export const auth = betterAuth({
 
     sendResetPassword: async ({ user, url }) => {
       const email = user.email;
+
+      let clientResetPasswordUrl = url;
+      try {
+        const parsedUrl = new URL(url);
+        const token = parsedUrl.searchParams.get("token");
+        if (token) {
+          clientResetPasswordUrl = `${env.CLIENT_URL}/reset-password?token=${encodeURIComponent(token)}`;
+        }
+      } catch {
+        // Fallback to original url
+      }
+
       const htmlContent = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
           <h2 style="color: #0f172a; margin: 0 0 12px 0; font-size: 20px; font-weight: 700; text-transform: uppercase; font-family: monospace;">[UPNODE] Password Reset Request</h2>
           <p style="color: #334155; font-size: 14px; line-height: 1.5; margin-bottom: 20px;">Hi ${user.name || "there"},</p>
           <p style="color: #334155; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">We received a request to reset your password. Click the button below to set a new password:</p>
           <p style="margin-bottom: 24px;">
-            <a href="${url}" style="display: inline-block; padding: 10px 20px; background-color: #0f172a; color: #ffffff; text-decoration: none; border-radius: 0px; font-weight: 600; font-family: monospace; font-size: 12px; border: 1px solid #000000; text-transform: uppercase;">[RESET_PASSWORD]</a>
+            <a href="${clientResetPasswordUrl}" style="display: inline-block; padding: 10px 20px; background-color: #0f172a; color: #ffffff; text-decoration: none; border-radius: 0px; font-weight: 600; font-family: monospace; font-size: 12px; border: 1px solid #000000; text-transform: uppercase;">[RESET_PASSWORD]</a>
           </p>
           <p style="color: #64748b; font-size: 12px; line-height: 1.5; border-top: 1px solid #edf2f7; padding-top: 16px; margin-top: 24px; font-family: monospace;">
             If you did not request this, you can safely ignore this email.
@@ -151,16 +234,27 @@ export const auth = betterAuth({
         </div>
       `;
 
+      // Always print link clearly in terminal console for easy localhost testing
+      console.log(
+        `\n=================================================================`,
+      );
+      console.log(`🔑 [UPNODE PASSWORD RESET LINK FOR: ${email}]`);
+      console.log(`👉 ${clientResetPasswordUrl}`);
+      console.log(
+        `=================================================================\n`,
+      );
+
       if (env.RESEND_API_KEY) {
         try {
-          let response = await fetch("https://api.resend.com/emails", {
+          const fromEmail = env.EMAIL_FROM || "onboarding@resend.dev";
+          const response = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${env.RESEND_API_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: env.EMAIL_FROM || "onboarding@resend.dev",
+              from: fromEmail,
               to: email,
               subject: "[UpNode] Password Reset Request",
               html: htmlContent,
@@ -169,35 +263,61 @@ export const auth = betterAuth({
 
           if (!response.ok) {
             const errorText = await response.text();
-            if (errorText.includes("only send to your own email") || errorText.includes("domain")) {
-              logger.warn(`[Better Auth Resend Fallback] Retrying password reset dispatch to verified owner rashedulraha.bd@gmail.com...`);
-              response = await fetch("https://api.resend.com/emails", {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${env.RESEND_API_KEY}`,
-                  "Content-Type": "application/json",
+            if (
+              errorText.includes("only send to your own email") ||
+              errorText.includes("domain") ||
+              response.status === 403
+            ) {
+              logger.warn(
+                `[Better Auth Resend Fallback] Resend default domain restriction detected. Retrying password reset dispatch to account owner rashedulraha.bd@gmail.com...`,
+              );
+              const fallbackResponse = await fetch(
+                "https://api.resend.com/emails",
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${env.RESEND_API_KEY}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    from: "onboarding@resend.dev",
+                    to: "rashedulraha.bd@gmail.com",
+                    subject: `[UpNode] Password Reset Request (${email})`,
+                    html: htmlContent,
+                  }),
                 },
-                body: JSON.stringify({
-                  from: "onboarding@resend.dev",
-                  to: "rashedulraha.bd@gmail.com",
-                  subject: `[UpNode] Password Reset Request (${email})`,
-                  html: htmlContent,
-                }),
-              });
+              );
+
+              if (!fallbackResponse.ok) {
+                const fallbackError = await fallbackResponse.text();
+                throw new Error(
+                  `Resend fallback status ${fallbackResponse.status}: ${fallbackError}`,
+                );
+              }
+            } else {
+              throw new Error(`Resend status ${response.status}: ${errorText}`);
             }
           }
 
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Resend responded with status ${response.status}: ${errorText}`);
-          }
-          logger.info({ event: "PASSWORD_RESET_EMAIL_SENT", email }, `[Better Auth] Reset password email sent via Resend.`);
+          logger.info(
+            { event: "PASSWORD_RESET_EMAIL_SENT", email },
+            `[Better Auth] Reset password email sent via Resend.`,
+          );
         } catch (err: any) {
-          logger.error({ event: "PASSWORD_RESET_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send reset password email: ${err.message}`);
-          logger.info({ event: "PASSWORD_RESET_EMAIL_FALLBACK", email }, `[Better Auth Fallback Link] 🔑 Password reset link for ${email}: ${url}`);
+          logger.error(
+            { event: "PASSWORD_RESET_EMAIL_ERROR", email, error: err.message },
+            `[Better Auth Error] Failed to send reset password email: ${err.message}`,
+          );
+          logger.info(
+            { event: "PASSWORD_RESET_EMAIL_FALLBACK", email },
+            `[Better Auth Fallback Link] 🔑 Password reset link for ${email}: ${clientResetPasswordUrl}`,
+          );
         }
       } else {
-        logger.info({ event: "PASSWORD_RESET_EMAIL_SIMULATED", email }, `[Better Auth Simulated Email] 🔑 Reset password link for ${email}: ${url}`);
+        logger.info(
+          { event: "PASSWORD_RESET_EMAIL_SIMULATED", email },
+          `[Better Auth Simulated Email] 🔑 Reset password link for ${email}: ${clientResetPasswordUrl}`,
+        );
       }
     },
   },

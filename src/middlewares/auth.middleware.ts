@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { auth } from "../lib/auth";
 import { prisma } from "../lib/prisma";
 import { redis } from "../lib/redis";
-import { Role } from "@prisma/client";
+import { UserRole, UserRole as Role } from "@prisma/client";
 import { fromNodeHeaders } from "better-auth/node";
 import { logger } from "../lib/logger";
 
@@ -16,7 +16,11 @@ async function getCache<T>(key: string): Promise<T | null> {
   }
 }
 
-async function setCache(key: string, data: any, ttlSeconds: number = 300): Promise<void> {
+async function setCache(
+  key: string,
+  data: any,
+  ttlSeconds: number = 300,
+): Promise<void> {
   try {
     await redis.set(key, JSON.stringify(data), "EX", ttlSeconds);
   } catch {
@@ -24,7 +28,10 @@ async function setCache(key: string, data: any, ttlSeconds: number = 300): Promi
   }
 }
 
-export const invalidateUserSessionCache = async (userId: string, organizationId?: string): Promise<void> => {
+export const invalidateUserSessionCache = async (
+  userId: string,
+  organizationId?: string,
+): Promise<void> => {
   try {
     await redis.del(`user:cache:${userId}`);
     await redis.del(`user:default_org:${userId}`);
@@ -36,7 +43,11 @@ export const invalidateUserSessionCache = async (userId: string, organizationId?
   }
 };
 
-export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
+export const requireAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   try {
     const authHeader = req.headers.authorization || req.headers.cookie || "";
     const sessionCacheKey = authHeader ? `auth:session:${authHeader}` : null;
@@ -63,7 +74,9 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    let dbUser = await getCache<{ role: Role; isBlocked: boolean }>(`user:cache:${session.user.id}`);
+    let dbUser = await getCache<{ role: Role; isBlocked: boolean }>(
+      `user:cache:${session.user.id}`,
+    );
 
     if (!dbUser) {
       try {
@@ -88,7 +101,8 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     if (session.user && !session.user.emailVerified) {
       res.status(403).json({
         error: "EMAIL_NOT_VERIFIED",
-        message: "Forbidden: Please verify your email address to access the dashboard portal.",
+        message:
+          "Forbidden: Please verify your email address to access the dashboard portal.",
       });
       return;
     }
@@ -101,55 +115,60 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     req.session = session.session;
     next();
   } catch (error: any) {
-    logger.error({ event: "AUTH_MIDDLEWARE_ERROR", error: error.message }, `[Auth Middleware] Error: ${error.message}`);
-    res.status(500).json({ error: "Internal server error during authentication." });
+    logger.error(
+      { event: "AUTH_MIDDLEWARE_ERROR", error: error.message },
+      `[Auth Middleware] Error: ${error.message}`,
+    );
+    res
+      .status(500)
+      .json({ error: "Internal server error during authentication." });
   }
 };
 
-export const requireSuperAdmin = async (req: Request, res: Response, next: NextFunction) => {
+export const requireSuperAdmin = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  res
+    .status(403)
+    .json({ error: "Forbidden: Super Admin functionality has been removed." });
+};
+
+export const requireOrganization = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   try {
     if (!req.user) {
       res.status(401).json({ error: "Unauthorized: User not authenticated." });
       return;
     }
-
-    if (req.user.isBlocked) {
-      res.status(403).json({ error: "Forbidden: User account is blocked." });
-      return;
-    }
-
-    if (req.user.role !== Role.SUPER_ADMIN) {
-      res.status(403).json({ error: "Forbidden: Requires SUPER_ADMIN privileges." });
-      return;
-    }
-
-    next();
-  } catch (error: any) {
-    logger.error({ event: "SUPER_ADMIN_MIDDLEWARE_ERROR", error: error.message }, `[Super Admin Middleware] Error: ${error.message}`);
-    res.status(500).json({ error: "Internal server error during super admin verification." });
-  }
-};
-
-export const requireOrganization = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    if (!req.user) {
-      res.status(401).json({ error: "Unauthorized: User not authenticated." });
-      return;
-    }
-
-    const isSuperAdmin = req.user.role === Role.SUPER_ADMIN;
 
     let organizationId =
       (req.headers["x-organization-id"] as string) ||
       (req.query?.organizationId as string) ||
       (req.query?.orgId as string);
 
-    // If no organizationId header/query was passed, resolve automatically for the user
+    // Verify if requested organizationId exists in DB
+    if (organizationId) {
+      const orgExists = await prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true },
+      });
+      if (!orgExists) {
+        organizationId = "";
+      }
+    }
+
+    // Resolve organizationId if not explicitly provided
     if (!organizationId) {
       const defaultOrgCacheKey = `user:default_org:${req.user.id}`;
       organizationId = (await getCache<string>(defaultOrgCacheKey)) || "";
 
       if (!organizationId) {
+        // Users fall back to their primary member organization
         const userMember = await prisma.member.findFirst({
           where: { userId: req.user.id },
         });
@@ -157,10 +176,30 @@ export const requireOrganization = async (req: Request, res: Response, next: Nex
         if (userMember) {
           organizationId = userMember.organizationId;
         } else {
-          // Fallback to first existing organization in DB
-          const defaultOrg = await prisma.organization.findFirst();
-          if (defaultOrg) {
-            organizationId = defaultOrg.id;
+          // Auto-create default org for users without an organization context
+          const baseName =
+            req.user.name || req.user.email?.split("@")[0] || "Personal";
+          const orgName = `${baseName}'s Workspace`;
+          const slug = `workspace-${req.user.id.slice(0, 8)}`;
+
+          try {
+            const createdOrg = await prisma.organization.create({
+              data: {
+                name: orgName,
+                slug,
+                members: {
+                  create: {
+                    userId: req.user.id,
+                    role: Role.ADMIN,
+                  },
+                },
+              },
+            });
+            organizationId = createdOrg.id;
+          } catch {
+            // In case slug collided or db write failed, find any org
+            const existingOrg = await prisma.organization.findFirst();
+            if (existingOrg) organizationId = existingOrg.id;
           }
         }
 
@@ -171,19 +210,16 @@ export const requireOrganization = async (req: Request, res: Response, next: Nex
     }
 
     if (!organizationId) {
-      res.status(400).json({ error: "Bad Request: No organization context found." });
+      res
+        .status(400)
+        .json({ error: "Bad Request: No organization context found." });
       return;
     }
 
-    // SUPER_ADMIN (Root user) gets access to any Organization's data platform-wide
-    if (isSuperAdmin) {
-      req.organizationId = organizationId;
-      req.role = Role.SUPER_ADMIN;
-      next();
-      return;
-    }
+    // Check for x-role-preview header sent by ADMIN for role testing
+    const rolePreview = req.headers["x-role-preview"] as string;
 
-    // Verify user membership in organization or auto-grant membership with Redis caching
+    // Users MUST be an explicit member of the organization
     const memberCacheKey = `member:cache:${organizationId}:${req.user.id}`;
     let member = await getCache<{ id: string; role: Role }>(memberCacheKey);
 
@@ -197,62 +233,50 @@ export const requireOrganization = async (req: Request, res: Response, next: Nex
         },
       });
 
-      if (!member) {
-        // Auto-assign user into the organization (first to join gets ADMIN, else VIEWER)
-        try {
-          const memberCount = await prisma.member.count({
-            where: { organizationId },
-          });
-          const assignedRole = memberCount === 0 ? Role.ADMIN : Role.VIEWER;
-
-          member = await prisma.member.create({
-            data: {
-              organizationId,
-              userId: req.user.id,
-              role: assignedRole,
-            },
-          });
-        } catch {
-          member = await prisma.member.findFirst({
-            where: { userId: req.user.id },
-          });
-        }
-      }
-
       if (member) {
         await setCache(memberCacheKey, member, 300);
       }
     }
 
     if (!member) {
-      res.status(403).json({ error: "Forbidden: Not a member of this organization." });
+      res
+        .status(403)
+        .json({ error: "Forbidden: Not a member of this organization." });
       return;
     }
 
     req.organizationId = organizationId;
-    req.role = member.role;
+    req.role =
+      rolePreview &&
+      member.role === Role.ADMIN &&
+      ["ADMIN", "ENGINEER", "VIEWER"].includes(rolePreview)
+        ? (rolePreview as Role)
+        : member.role;
     next();
   } catch (error: any) {
-    logger.error({ event: "ORGANIZATION_MIDDLEWARE_ERROR", error: error.message }, `[Organization Middleware] Error: ${error.message}`);
-    res.status(500).json({ error: "Internal server error during organization verification." });
+    logger.error(
+      { event: "ORGANIZATION_MIDDLEWARE_ERROR", error: error.message },
+      `[Organization Middleware] Error: ${error.message}`,
+    );
+    res.status(500).json({
+      error: "Internal server error during organization verification.",
+    });
   }
 };
 
 export const requireRole = (...roles: Role[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.role && req.user?.role !== Role.SUPER_ADMIN) {
-      res.status(403).json({ error: "Forbidden: Organization context required." });
+    if (!req.role) {
+      res
+        .status(403)
+        .json({ error: "Forbidden: Organization context required." });
       return;
     }
 
-    // SUPER_ADMIN (Root user) passes all role requirements
-    if (req.role === Role.SUPER_ADMIN || req.user?.role === Role.SUPER_ADMIN) {
-      next();
-      return;
-    }
-
-    if (!req.role || !roles.includes(req.role)) {
-      res.status(403).json({ error: `Forbidden: Requires one of the following roles: ${roles.join(", ")}` });
+    if (!roles.includes(req.role)) {
+      res.status(403).json({
+        error: `Forbidden: Requires one of the following roles: ${roles.join(", ")}`,
+      });
       return;
     }
 
