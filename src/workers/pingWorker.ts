@@ -375,6 +375,14 @@ export const startPingWorker = () => {
     }
   });
 
+  worker.on("error", (err: Error) => {
+    if (err.message.includes("ETIMEDOUT") || err.message.includes("ECONNREFUSED")) {
+      logger.warn(`[Ping Worker] Redis connection network warning: ${err.message}`);
+    } else {
+      logger.error({ event: "PING_WORKER_ERROR", error: err.message }, `[Ping Worker] Unexpected worker error: ${err.message}`);
+    }
+  });
+
   logger.info(`[Ping Worker] Uptime ping worker started listening on queue: ${PING_QUEUE_NAME}`);
   return worker;
 };

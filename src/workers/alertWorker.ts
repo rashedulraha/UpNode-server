@@ -507,7 +507,11 @@ export const startAlertWorker = () => {
   });
 
   worker.on("error", (err: Error) => {
-    logger.error({ event: "ALERT_WORKER_ERROR", error: err.message }, `[Alert Worker] Unexpected worker error: ${err.message}`);
+    if (err.message.includes("ETIMEDOUT") || err.message.includes("ECONNREFUSED")) {
+      logger.warn(`[Alert Worker] Redis connection network warning: ${err.message}`);
+    } else {
+      logger.error({ event: "ALERT_WORKER_ERROR", error: err.message }, `[Alert Worker] Unexpected worker error: ${err.message}`);
+    }
   });
 
   logger.info(`[Alert Worker] Alert worker started listening on queue: ${ALERT_QUEUE_NAME}`);

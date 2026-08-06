@@ -9,6 +9,8 @@ const getRedisOptions = (): RedisOptions => {
   const commonOptions: RedisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
+    connectTimeout: 10000,
+    keepAlive: 10000,
     retryStrategy(times) {
       // Exponential backoff capped at 10 seconds to avoid spamming the console
       return Math.min(times * 1000, 10000);
