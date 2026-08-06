@@ -89,7 +89,7 @@ export const auth = betterAuth({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: env.EMAIL_FROM || "alerts@upnode.dev",
+              from: env.EMAIL_FROM || "onboarding@resend.dev",
               to: email,
               subject: "[UpNode] Verify Your Email Address",
               html: htmlContent,
@@ -102,10 +102,12 @@ export const auth = betterAuth({
           logger.info({ event: "VERIFICATION_EMAIL_SENT", email }, `[Better Auth] Verification email sent to ${email} via Resend.`);
         } catch (err: any) {
           logger.error({ event: "VERIFICATION_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send verification email: ${err.message}`);
+          logger.info({ event: "VERIFICATION_EMAIL_FALLBACK", email }, `[Better Auth Fallback Link] ✉️ Verification link for ${email}: ${url}`);
         }
       } else {
         logger.info({ event: "VERIFICATION_EMAIL_SIMULATED", email }, `[Better Auth Simulated Email] ✉️ Email verification link for ${email}: ${url}`);
       }
+
     },
   },
   emailAndPassword: {
@@ -137,7 +139,7 @@ export const auth = betterAuth({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: env.EMAIL_FROM || "alerts@upnode.dev",
+              from: env.EMAIL_FROM || "onboarding@resend.dev",
               to: email,
               subject: "[UpNode] Password Reset Request",
               html: htmlContent,
@@ -150,9 +152,10 @@ export const auth = betterAuth({
           logger.info({ event: "PASSWORD_RESET_EMAIL_SENT", email }, `[Better Auth] Reset password email sent to ${email} via Resend.`);
         } catch (err: any) {
           logger.error({ event: "PASSWORD_RESET_EMAIL_ERROR", email, error: err.message }, `[Better Auth Error] Failed to send reset password email: ${err.message}`);
+          logger.info({ event: "PASSWORD_RESET_EMAIL_FALLBACK", email }, `[Better Auth Fallback Link] 🔑 Password reset link for ${email}: ${url}`);
         }
       } else {
-        logger.info({ event: "PASSWORD_RESET_EMAIL_SIMULATED", email }, `[Better Auth Simulated Email] ✉️ Reset password link for ${email}: ${url}`);
+        logger.info({ event: "PASSWORD_RESET_EMAIL_SIMULATED", email }, `[Better Auth Simulated Email] 🔑 Reset password link for ${email}: ${url}`);
       }
     },
   },
