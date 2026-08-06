@@ -17,7 +17,11 @@ import { userRoutes } from "./modules/users/user.routes";
 import { webhookRoutes } from "./modules/webhooks/webhook.routes";
 import { errorHandler } from "./middlewares/error.middleware";
 import { requestLogger } from "./middlewares/requestLogger.middleware";
-import { ingestionRateLimiter, apiRateLimiter, authRateLimiter } from "./middlewares/rateLimit.middleware";
+import {
+	ingestionRateLimiter,
+	apiRateLimiter,
+	authRateLimiter,
+} from "./middlewares/rateLimit.middleware";
 import { startAlertWorker } from "./workers/alertWorker";
 import { startPingWorker } from "./workers/pingWorker";
 import { setupCronPingJob } from "./queues/pingQueue";
@@ -27,17 +31,17 @@ const app = express();
 
 // Trust reverse proxy in production deployments (Nginx, Cloudflare, AWS ALB)
 if (env.NODE_ENV === "production") {
-  app.set("trust proxy", 1);
+	app.set("trust proxy", 1);
 }
 
 // 1. Production Security & Performance Middleware
 app.use(helmet());
 app.use(compression());
 app.use(
-  cors({
-    origin: env.CLIENT_URL,
-    credentials: true,
-  })
+	cors({
+		origin: env.CLIENT_URL,
+		credentials: true,
+	}),
 );
 
 // 2. Request Parsing & Size Limits
@@ -54,36 +58,39 @@ app.use("/api/auth", authRateLimiter);
 
 // 5. Skip Email Verification Endpoint (Dev / Localhost Mode)
 app.post("/api/auth/skip-verification", async (req, res) => {
-  try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+	try {
+		const session = await auth.api.getSession({
+			headers: fromNodeHeaders(req.headers),
+		});
 
-    if (!session || !session.user) {
-      res.status(401).json({ error: "Unauthorized: No active session found." });
-      return;
-    }
+		if (!session || !session.user) {
+			res.status(401).json({ error: "Unauthorized: No active session found." });
+			return;
+		}
 
-    await prisma.user.update({
-      where: { id: session.user.id },
-      data: { emailVerified: true },
-    });
+		await prisma.user.update({
+			where: { id: session.user.id },
+			data: { emailVerified: true },
+		});
 
-    await invalidateUserSessionCache(session.user.id);
+		await invalidateUserSessionCache(session.user.id);
 
-    logger.info(
-      { event: "EMAIL_VERIFICATION_SKIPPED", userId: session.user.id },
-      `[Auth] User ${session.user.email} skipped email verification.`
-    );
+		logger.info(
+			{ event: "EMAIL_VERIFICATION_SKIPPED", userId: session.user.id },
+			`[Auth] User ${session.user.email} skipped email verification.`,
+		);
 
-    res.json({ success: true, message: "Email verification skipped successfully." });
-  } catch (err: any) {
-    logger.error(
-      { event: "SKIP_VERIFICATION_ERROR", error: err.message },
-      `[Auth] Failed to skip email verification: ${err.message}`
-    );
-    res.status(500).json({ error: "Failed to skip email verification." });
-  }
+		res.json({
+			success: true,
+			message: "Email verification skipped successfully.",
+		});
+	} catch (err: any) {
+		logger.error(
+			{ event: "SKIP_VERIFICATION_ERROR", error: err.message },
+			`[Auth] Failed to skip email verification: ${err.message}`,
+		);
+		res.status(500).json({ error: "Failed to skip email verification." });
+	}
 });
 
 // 6. Better Auth API Handler
@@ -99,12 +106,12 @@ app.use("/api", streamRoutes);
 
 // Health check endpoint
 app.get("/", (req, res) => {
-  res.json({
-    status: "online",
-    service: "UpNode API",
-    environment: env.NODE_ENV,
-    timestamp: new Date().toISOString(),
-  });
+	res.json({
+		status: "online",
+		service: "UpNode API",
+		environment: env.NODE_ENV,
+		timestamp: new Date().toISOString(),
+	});
 });
 
 // 7. Centralized Error Handler (Must be registered after all routes)
@@ -117,9 +124,8 @@ setupCronPingJob();
 
 // 9. Start HTTP Server
 const server = app.listen(env.PORT, () => {
-  logger.info(`UpNode Server running on port ${env.PORT} [${env.NODE_ENV}]`);
+	logger.info(`UpNode Server running on port ${env.PORT} [${env.NODE_ENV}]`);
 });
 
 // 10. Register Graceful Shutdown Handler (SIGTERM / SIGINT)
 setupGracefulShutdown(server, [alertWorker, pingWorker]);
-
