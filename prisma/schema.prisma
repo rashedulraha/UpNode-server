@@ -26,7 +26,7 @@ model User {
   image         String?
   createdAt     DateTime
   updatedAt     DateTime
-  role          Role       @default(VIEWER)
+  role          UserRole   @default(ADMIN)
   isBlocked     Boolean    @default(false)
   sessions      Session[]
   accounts      Account[]
@@ -74,8 +74,7 @@ model Verification {
   updatedAt  DateTime?
 }
 
-enum Role {
-  SUPER_ADMIN
+enum UserRole {
   ADMIN
   ENGINEER
   VIEWER
@@ -83,7 +82,7 @@ enum Role {
 
 model Member {
   id             String       @id @default(uuid())
-  role           Role
+  role           UserRole
   organizationId String
   userId         String
   organization   Organization @relation(fields: [organizationId], references: [id])
