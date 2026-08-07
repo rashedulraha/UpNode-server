@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import { prisma } from "../../lib/prisma";
 import { invalidateUserSessionCache } from "../../middlewares/auth.middleware";
 
@@ -174,6 +175,65 @@ export class AdminController {
 			res.json({
 				message: `Organization '${updated.name}' ${updated.isSuspended ? "suspended" : "reactivated"} successfully.`,
 				organization: updated,
+			});
+		} catch (error) {
+			next(error);
+		}
+	}
+
+	async impersonateUser(req: Request, res: Response, next: NextFunction) {
+		try {
+			const targetUserId = String(req.params.targetUserId);
+			const targetUser = await prisma.user.findUnique({
+				where: { id: targetUserId },
+				select: { id: true, name: true, email: true, role: true },
+			});
+
+			if (!targetUser) {
+				res.status(404).json({ error: "Target user account not found." });
+				return;
+			}
+
+			// Generate new active session token for target user
+			const sessionToken = crypto.randomBytes(32).toString("hex");
+			const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+			await prisma.session.create({
+				data: {
+					id: crypto.randomUUID(),
+					token: sessionToken,
+					userId: targetUser.id,
+					expiresAt,
+					createdAt: new Date(),
+					updatedAt: new Date(),
+					ipAddress: req.ip,
+					userAgent: req.headers["user-agent"] || "SuperAdmin-Impersonation",
+				},
+			});
+
+			// Find target user's primary organization membership
+			const targetMember = await prisma.member.findFirst({
+				where: { userId: targetUser.id },
+				select: { organizationId: true },
+			});
+
+			const activeOrganizationId = targetMember?.organizationId || "";
+
+			// Set session token cookie in response
+			const isProd = process.env.NODE_ENV === "production";
+			res.cookie("better-auth.session_token", sessionToken, {
+				httpOnly: true,
+				secure: isProd,
+				sameSite: "lax",
+				expires: expiresAt,
+				path: "/",
+			});
+
+			res.json({
+				message: `Impersonation initiated. Now logged in as ${targetUser.email}`,
+				sessionToken,
+				user: targetUser,
+				activeOrganizationId,
 			});
 		} catch (error) {
 			next(error);

@@ -26,5 +26,8 @@ router.get("/organizations", (req, res, next) =>
 router.post("/organizations/:orgId/toggle-suspend", (req, res, next) =>
 	adminController.toggleOrganizationSuspend(req, res, next),
 );
+router.post("/impersonate/:targetUserId", (req, res, next) =>
+	adminController.impersonateUser(req, res, next),
+);
 
 export const adminRoutes = router;
