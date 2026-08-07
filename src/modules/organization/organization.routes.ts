@@ -54,10 +54,8 @@ router.put("/integrations", requireRole(Role.ADMIN), (req, res, next) =>
 );
 
 // Delete Organization (Allowed for ADMIN and ENGINEER roles, blocked for VIEWER)
-router.delete(
-	"/",
-	requireRole(Role.ADMIN, Role.ENGINEER),
-	(req, res, next) => organizationController.deleteOrganization(req, res, next),
+router.delete("/", requireRole(Role.ADMIN, Role.ENGINEER), (req, res, next) =>
+	organizationController.deleteOrganization(req, res, next),
 );
 
 export const organizationRoutes = router;
