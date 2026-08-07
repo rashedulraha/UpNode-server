@@ -163,14 +163,19 @@ export const requireOrganization = async (
 			return;
 		}
 
-		// Verify if requested organizationId exists in DB
+		// Verify if requested organizationId exists in DB and is not suspended
 		if (organizationId) {
 			const orgExists = await prisma.organization.findUnique({
 				where: { id: organizationId },
-				select: { id: true },
+				select: { id: true, isSuspended: true },
 			});
 			if (!orgExists) {
 				organizationId = "";
+			} else if (orgExists.isSuspended) {
+				res.status(403).json({
+					error: "Forbidden: This organization workspace has been suspended by platform administration.",
+				});
+				return;
 			}
 		}
 

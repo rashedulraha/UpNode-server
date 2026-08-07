@@ -20,5 +20,11 @@ router.get("/users", (req, res, next) =>
 router.post("/users/:userId/toggle-block", (req, res, next) =>
 	adminController.toggleUserBlock(req, res, next),
 );
+router.get("/organizations", (req, res, next) =>
+	adminController.getOrganizations(req, res, next),
+);
+router.post("/organizations/:orgId/toggle-suspend", (req, res, next) =>
+	adminController.toggleOrganizationSuspend(req, res, next),
+);
 
 export const adminRoutes = router;
