@@ -21,6 +21,7 @@ export class OrganizationService {
 						email: true,
 						image: true,
 						createdAt: true,
+						emailVerified: true,
 					},
 				},
 			},
