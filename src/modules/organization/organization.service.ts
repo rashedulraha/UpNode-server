@@ -348,6 +348,65 @@ export class OrganizationService {
 
 		return this.getIntegrations(organizationId);
 	}
+
+	/**
+	 * Delete an organization and all associated data (cascade)
+	 */
+	async deleteOrganization(organizationId: string) {
+		return prisma.$transaction(async (tx) => {
+			const projects = await tx.project.findMany({
+				where: { organizationId },
+				select: { id: true },
+			});
+			const projectIds = projects.map((p) => p.id);
+
+			if (projectIds.length > 0) {
+				await tx.pingMetric.deleteMany({
+					where: { projectId: { in: projectIds } },
+				});
+
+				const incidents = await tx.incident.findMany({
+					where: { projectId: { in: projectIds } },
+					select: { id: true },
+				});
+				const incidentIds = incidents.map((i) => i.id);
+
+				if (incidentIds.length > 0) {
+					await tx.timelineEvent.deleteMany({
+						where: { incidentId: { in: incidentIds } },
+					});
+				}
+
+				await tx.incident.deleteMany({
+					where: { projectId: { in: projectIds } },
+				});
+
+				await tx.statusSubscriber.deleteMany({
+					where: { projectId: { in: projectIds } },
+				});
+
+				await tx.webhook.deleteMany({
+					where: { projectId: { in: projectIds } },
+				});
+
+				await tx.project.deleteMany({
+					where: { organizationId },
+				});
+			}
+
+			await tx.webhook.deleteMany({
+				where: { organizationId },
+			});
+
+			await tx.member.deleteMany({
+				where: { organizationId },
+			});
+
+			return tx.organization.delete({
+				where: { id: organizationId },
+			});
+		});
+	}
 }
 
 export const organizationService = new OrganizationService();

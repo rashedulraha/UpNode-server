@@ -111,6 +111,16 @@ export class OrganizationController {
 			next(error);
 		}
 	}
+
+	async deleteOrganization(req: Request, res: Response, next: NextFunction) {
+		try {
+			const organizationId = req.organizationId!;
+			await organizationService.deleteOrganization(organizationId);
+			res.json({ message: "Organization deleted successfully." });
+		} catch (error) {
+			next(error);
+		}
+	}
 }
 
 export const organizationController = new OrganizationController();

@@ -197,9 +197,21 @@ export const requireOrganization = async (
 						});
 						organizationId = createdOrg.id;
 					} catch {
-						// In case slug collided or db write failed, find any org
-						const existingOrg = await prisma.organization.findFirst();
-						if (existingOrg) organizationId = existingOrg.id;
+						// Retry with unique random slug suffix if slug collided
+						const uniqueSlug = `${slug}-${Date.now().toString(36)}`;
+						const createdOrg = await prisma.organization.create({
+							data: {
+								name: orgName,
+								slug: uniqueSlug,
+								members: {
+									create: {
+										userId: req.user.id,
+										role: Role.ADMIN,
+									},
+								},
+							},
+						});
+						organizationId = createdOrg.id;
 					}
 				}
 
