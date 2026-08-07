@@ -3,9 +3,13 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Set dummy DATABASE_URL for Prisma client generation during build time
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
+
 # Copy package files and Prisma schema
 COPY package*.json ./
 COPY prisma ./prisma/
+COPY prisma.config.ts ./
 
 # Install all dependencies (including devDependencies for TypeScript build)
 RUN npm ci
@@ -24,10 +28,12 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=4000
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
 
-# Copy package files and Prisma schema
+# Copy package files and Prisma config
 COPY package*.json ./
 COPY prisma ./prisma/
+COPY prisma.config.ts ./
 
 # Install only production dependencies
 RUN npm ci --omit=dev
