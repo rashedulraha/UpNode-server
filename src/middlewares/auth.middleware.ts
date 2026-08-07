@@ -192,44 +192,6 @@ export const requireOrganization = async (
 
 				if (userMember) {
 					organizationId = userMember.organizationId;
-				} else {
-					// Auto-create default org for users without an organization context
-					const baseName =
-						req.user.name || req.user.email?.split("@")[0] || "Personal";
-					const orgName = `${baseName}'s Workspace`;
-					const slug = `workspace-${req.user.id.slice(0, 8)}`;
-
-					try {
-						const createdOrg = await prisma.organization.create({
-							data: {
-								name: orgName,
-								slug,
-								members: {
-									create: {
-										userId: req.user.id,
-										role: Role.ADMIN,
-									},
-								},
-							},
-						});
-						organizationId = createdOrg.id;
-					} catch {
-						// Retry with unique random slug suffix if slug collided
-						const uniqueSlug = `${slug}-${Date.now().toString(36)}`;
-						const createdOrg = await prisma.organization.create({
-							data: {
-								name: orgName,
-								slug: uniqueSlug,
-								members: {
-									create: {
-										userId: req.user.id,
-										role: Role.ADMIN,
-									},
-								},
-							},
-						});
-						organizationId = createdOrg.id;
-					}
 				}
 
 				if (organizationId) {

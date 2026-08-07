@@ -59,35 +59,14 @@ export const auth = betterAuth({
 						data: { role: assignedRole },
 					});
 
-					const orgName = `${user.name || user.email.split("@")[0]}'s Org`;
-					const baseSlug = (user.name || user.email.split("@")[0])
-						.toLowerCase()
-						.replace(/[^a-z0-9]/g, "-")
-						.replace(/-+/g, "-")
-						.replace(/^-|-$/g, "");
-					const slug = `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-					const organization = await prisma.organization.create({
-						data: {
-							name: orgName,
-							slug,
-							alertEmail: user.email,
-							members: {
-								create: {
-									userId: user.id,
-									role: Role.ADMIN,
-								},
-							},
-						},
-					});
-
 					logger.info(
 						{
-							event: "ORGANIZATION_AUTO_CREATED",
+							event: "USER_REGISTERED",
 							userId: user.id,
-							orgId: organization.id,
+							email: user.email,
+							role: assignedRole,
 						},
-						`[Auth] Created organization '${orgName}' (${organization.id}) with ADMIN role for new user ${user.email}`,
+						`[Auth] Registered user ${user.email} with role ${assignedRole}`,
 					);
 				},
 			},
