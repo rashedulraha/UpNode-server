@@ -130,9 +130,13 @@ export const requireSuperAdmin = async (
 	res: Response,
 	next: NextFunction,
 ) => {
-	res
-		.status(403)
-		.json({ error: "Forbidden: Super Admin functionality has been removed." });
+	if (!req.user || req.user.role !== Role.SUPER_ADMIN) {
+		res
+			.status(403)
+			.json({ error: "Forbidden: Requires Platform Super Admin role." });
+		return;
+	}
+	next();
 };
 
 export const requireOrganization = async (
@@ -150,6 +154,14 @@ export const requireOrganization = async (
 			(req.headers["x-organization-id"] as string) ||
 			(req.query?.organizationId as string) ||
 			(req.query?.orgId as string);
+
+		// If user is SUPER_ADMIN, organizationId is optional/null as they own the entire platform
+		if (req.user.role === Role.SUPER_ADMIN) {
+			req.organizationId = organizationId || "";
+			req.role = Role.SUPER_ADMIN;
+			next();
+			return;
+		}
 
 		// Verify if requested organizationId exists in DB
 		if (organizationId) {
@@ -278,6 +290,11 @@ export const requireOrganization = async (
 
 export const requireRole = (...roles: Role[]) => {
 	return (req: Request, res: Response, next: NextFunction) => {
+		if (req.user?.role === Role.SUPER_ADMIN || req.role === Role.SUPER_ADMIN) {
+			next();
+			return;
+		}
+
 		if (!req.role) {
 			res
 				.status(403)

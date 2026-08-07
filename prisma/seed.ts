@@ -36,40 +36,51 @@ async function main() {
 
   console.log("🧹 Successfully deleted all existing data and users from the database.");
 
-  // 2. Create primary Admin user
-  const adminEmail = "rashedulraha.bd@gmail.com";
-  const adminPassword = "9B3BcOzRHBE8iTc";
+  // 2. Create Master SUPER_ADMIN user
+  const superAdminEmail = "rashedulraha.bd@gmail.com";
+  const superAdminPassword = "9B3BcOzRHBE8iTc";
 
   try {
     await auth.api.signUpEmail({
       body: {
-        email: adminEmail,
-        password: adminPassword,
-        name: "Admin User",
+        email: superAdminEmail,
+        password: superAdminPassword,
+        name: "Master Super Admin",
       },
     });
   } catch (err: any) {
     console.log("Sign up response:", err?.message || err);
   }
 
-  const adminUser = await prisma.user.findUnique({
-    where: { email: adminEmail },
+  const superAdminUser = await prisma.user.findUnique({
+    where: { email: superAdminEmail },
   });
 
-  if (adminUser) {
+  if (superAdminUser) {
     await prisma.user.update({
-      where: { id: adminUser.id },
+      where: { id: superAdminUser.id },
       data: {
-        role: UserRole.ADMIN,
+        role: UserRole.SUPER_ADMIN,
         emailVerified: true,
       },
     });
 
-    console.log("✨ Primary ADMIN user created successfully:");
-    console.log(`- Email: ${adminEmail}`);
-    console.log(`- Password: ${adminPassword}`);
-    console.log(`- Role: ${UserRole.ADMIN}`);
+    console.log("✨ Master SUPER_ADMIN user created successfully:");
+    console.log(`- Email: ${superAdminEmail}`);
+    console.log(`- Password: ${superAdminPassword}`);
+    console.log(`- Role: ${UserRole.SUPER_ADMIN}`);
   }
+
+  // Ensure no other existing users in the database have SUPER_ADMIN role
+  await prisma.user.updateMany({
+    where: {
+      email: { not: superAdminEmail },
+      role: UserRole.SUPER_ADMIN,
+    },
+    data: {
+      role: UserRole.ADMIN,
+    },
+  });
 
   console.log("✅ Seed completed successfully!");
 }

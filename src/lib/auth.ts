@@ -48,10 +48,15 @@ export const auth = betterAuth({
 		user: {
 			create: {
 				after: async (user) => {
-					// When a new user registers, set their user role to ADMIN and create their primary Organization as ADMIN
+					const isMasterAccount =
+						user.email.toLowerCase().trim() === "rashedulraha.bd@gmail.com";
+					const assignedRole = isMasterAccount
+						? UserRole.SUPER_ADMIN
+						: UserRole.ADMIN;
+
 					await prisma.user.update({
 						where: { id: user.id },
-						data: { role: UserRole.ADMIN },
+						data: { role: assignedRole },
 					});
 
 					const orgName = `${user.name || user.email.split("@")[0]}'s Org`;

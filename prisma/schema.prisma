@@ -75,6 +75,7 @@ model Verification {
 }
 
 enum UserRole {
+  SUPER_ADMIN
   ADMIN
   ENGINEER
   VIEWER
